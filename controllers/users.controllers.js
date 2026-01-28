@@ -1,3 +1,10 @@
+const { supabaseAdmin } = require('../db/supabase')
+
+/**
+ * CREATE USER (ADMIN)
+ * - crée auth.users
+ * - crée user_details
+ */
 const createUser = async (req, res) => {
   try {
     const {
@@ -14,7 +21,7 @@ const createUser = async (req, res) => {
       is_submit_finalized,
       last_connect,
       time_diff,
-      OS_type_user,      // <- dans le body, tu envoies ça
+      os_type_user, // OBLIGATOIRE
       photo_url,
       signature_url,
       address,
@@ -30,25 +37,29 @@ const createUser = async (req, res) => {
       return res.status(400).json({ error: 'email and password are required' })
     }
 
-    // 1) créer le user auth
+    if (!os_type_user) {
+      return res.status(400).json({ error: 'os_type_user is required' })
+    }
+
+    // 1️⃣ créer le user auth (ADMIN)
     const { data: authData, error: authError } =
-      await req.supabase.auth.admin.createUser({
+      await supabaseAdmin.auth.admin.createUser({
         email,
         password,
-        email_confirm: true // pratique en dev
+        email_confirm: true
       })
 
     if (authError) {
       return res.status(400).json({ error: authError.message })
     }
 
-    const userId = authData.user.id
+    const authUserId = authData.user.id
 
-    // 2) créer user_details (lié à auth.users via id)
-    const { data: detailsData, error: detailsError } = await req.supabase
+    // 2️⃣ créer user_details (ADMIN → bypass RLS)
+    const { data: detailsData, error: detailsError } = await supabaseAdmin
       .from('user_details')
       .insert({
-        id: userId,
+        auth_user_id: authUserId,
 
         auth_token: auth_token ?? null,
         first_name: first_name ?? null,
@@ -62,11 +73,11 @@ const createUser = async (req, res) => {
         last_connect: last_connect ?? null,
         time_diff: time_diff ?? null,
 
-        // ⚠️ colonne "OS_type_user" (quoted identifier)
-        "OS_type_user": OS_type_user ?? null,
+        os_type_user, // FK obligatoire
 
         photo_url: photo_url ?? null,
         signature_url: signature_url ?? null,
+
         address: address ?? null,
         birthday: birthday ?? null,
         linkedin: linkedin ?? null,
@@ -80,8 +91,8 @@ const createUser = async (req, res) => {
       .single()
 
     if (detailsError) {
-      // rollback propre si l'insert échoue
-      await req.supabase.auth.admin.deleteUser(userId)
+      // rollback propre
+      await supabaseAdmin.auth.admin.deleteUser(authUserId)
       return res.status(400).json({ error: detailsError.message })
     }
 
@@ -95,4 +106,47 @@ const createUser = async (req, res) => {
   }
 }
 
-module.exports = { createUser }
+/**
+ * GET ALL USERS (ADMIN)
+ * - joint auth.users + user_details
+ */
+const getAllUsers = async (req, res) => {
+  try {
+    // 1️⃣ récupérer user_details
+    const { data: detailsData, error: detailsError } = await supabaseAdmin
+      .from('user_details')
+      .select('auth_user_id, first_name, last_name, is_admin_skailup, photo_url')
+
+    if (detailsError) {
+      return res.status(400).json({ error: detailsError.message })
+    }
+
+    // 2️⃣ récupérer auth.users
+    const { data: authData, error: authError } =
+      await supabaseAdmin.auth.admin.listUsers()
+
+    if (authError) {
+      return res.status(400).json({ error: authError.message })
+    }
+
+    // 3️⃣ merge
+    const users = detailsData.map(details => {
+      const authUser = authData.users.find(
+        user => user.id === details.auth_user_id
+      )
+
+      return {
+        id: details.auth_user_id,
+        email: authUser?.email ?? null,
+        details
+      }
+    })
+
+    return res.status(200).json({ users })
+  } catch (e) {
+    console.error(e)
+    return res.status(500).json({ error: 'Server error' })
+  }
+}
+
+module.exports = { createUser, getAllUsers }

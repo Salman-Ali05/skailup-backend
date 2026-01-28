@@ -1,44 +1,28 @@
 require('dotenv').config()
-
 const express = require('express')
-const { createClient } = require('@supabase/supabase-js')
+
+const userRoutes = require('./routes/users.routes')
+const authRoutes = require('./routes/auth.routes')
+
+const { supabaseAnon } = require('./db/supabase')
 
 const app = express()
-const port = 3000
+const port = process.env.PORT || 3000
 
 app.use(express.json())
 
-const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env
-
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in env')
-}
-
-// Client Supabase admin (bypass RLS)
-const supabaseAdmin = createClient(
-    SUPABASE_URL,
-    SUPABASE_SERVICE_ROLE_KEY,
-    {
-        auth: {
-            persistSession: false,
-            autoRefreshToken: false
-        }
-    }
-)
-
-// 👉 on injecte supabase dans req (simple et pratique)
+// injecte le client "public" par défaut
 app.use((req, res, next) => {
-    req.supabase = supabaseAdmin
+    req.supabase = supabaseAnon
     next()
 })
 
 app.get('/', (req, res) => {
-    res.send('Hello World!')
+    res.send('SkailUp Backend is running!')
 })
 
-// routes
-const userRoutes = require('./routes/users.routes')
 app.use('/users', userRoutes)
+app.use('/auth', authRoutes)
 
 app.listen(port, () => {
     console.log(`Server running at http://localhost:${port}`)
