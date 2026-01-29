@@ -16,7 +16,7 @@ const allowedOrigins = [
     process.env.LOCALHOST_URL_2
 ].filter(Boolean)
 
-app.use(cors({
+const corsOptions = {
     origin: (origin, callback) => {
         if (!origin) return callback(null, true)
 
@@ -24,14 +24,16 @@ app.use(cors({
             return callback(null, true)
         }
 
-        return callback(new Error(`CORS blocked: ${origin}`), false)
+        return callback(null, false)
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
-}))
+    optionsSuccessStatus: 200
+}
 
-app.options('*', cors())
+app.use(cors(corsOptions))
+app.options('*', cors(corsOptions))
 
 app.use(express.json())
 
@@ -48,5 +50,5 @@ app.use('/users', userRoutes)
 app.use('/auth', authRoutes)
 
 app.listen(port, () => {
-    console.log(`Server running on port ${port}`)
+    console.log(`Server running at http://localhost:${port}`)
 })
