@@ -10,17 +10,31 @@ const { supabaseAnon } = require('./db/supabase')
 const app = express()
 const port = process.env.PORT || 3000
 
-// CORS configuration for specific app
-const corsOptions = {
-    origin: process.env.FRONTEND_URL,
-    credentials: true,
-    optionsSuccessStatus: 200
-}
+const allowedOrigins = [
+    process.env.FRONTEND_URL,
+    process.env.LOCALHOST_URL,
+    process.env.LOCALHOST_URL_2
+].filter(Boolean)
 
-app.use(cors(corsOptions))
+app.use(cors({
+    origin: (origin, callback) => {
+        if (!origin) return callback(null, true)
+
+        if (allowedOrigins.includes(origin)) {
+            return callback(null, true)
+        }
+
+        return callback(new Error(`CORS blocked: ${origin}`), false)
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+}))
+
+app.options('*', cors())
+
 app.use(express.json())
 
-// injecte le client "public" par défaut
 app.use((req, res, next) => {
     req.supabase = supabaseAnon
     next()
@@ -34,5 +48,5 @@ app.use('/users', userRoutes)
 app.use('/auth', authRoutes)
 
 app.listen(port, () => {
-    console.log(`Server running at http://localhost:${port}`)
+    console.log(`Server running on port ${port}`)
 })
