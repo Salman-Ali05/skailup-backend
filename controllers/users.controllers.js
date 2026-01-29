@@ -114,8 +114,8 @@ const getAllUsers = async (req, res) => {
   try {
     // 1️⃣ récupérer user_details
     const { data: detailsData, error: detailsError } = await supabaseAdmin
-      .from('user_details')
-      .select('auth_user_id, first_name, last_name, is_admin_skailup, photo_url')
+      .from('user_details', 'os_type_users')
+      .select('auth_user_id, first_name, last_name, is_admin_skailup, photo_url, os_type_users(lang_fr)')
 
     if (detailsError) {
       return res.status(400).json({ error: detailsError.message })
