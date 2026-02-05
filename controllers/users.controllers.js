@@ -149,4 +149,75 @@ const getAllUsers = async (req, res) => {
   }
 }
 
-module.exports = { createUser, getAllUsers }
+const updateSelfUser = async (req, res) => {
+  try {
+    const userId = req.user.id
+
+    const {
+      first_name,
+      last_name,
+      gender,
+      phone,
+      birthday,
+      town,
+      zip_code,
+      address,
+      linkedin
+    } = req.body
+
+    const patch = {}
+    if (typeof first_name !== 'undefined') patch.first_name = first_name
+    if (typeof last_name !== 'undefined') patch.last_name = last_name
+    if (typeof gender !== 'undefined') patch.gender = gender
+    if (typeof phone !== 'undefined') patch.phone = phone
+    if (typeof birthday !== 'undefined') patch.birthday = birthday
+    if (typeof town !== 'undefined') patch.town = town
+    if (typeof zip_code !== 'undefined') patch.zip_code = zip_code
+    if (typeof address !== 'undefined') patch.address = address
+    if (typeof linkedin !== 'undefined') patch.linkedin = linkedin
+
+    const { data, error } = await req.supabaseUser
+      .from('user_details')
+      .update(patch)
+      .eq('auth_user_id', userId)
+      .select(`
+        *,
+        os_type_user:os_type_users (*)
+      `)
+      .maybeSingle()
+
+    if (error) return res.status(400).json({ error: error.message })
+    if (!data) return res.status(404).json({ error: 'user_details not found' })
+
+    return res.status(200).json({
+      user_details: data,
+      os_type_user: data.os_type_user ?? null
+    })
+  } catch (e) {
+    console.error(e)
+    return res.status(500).json({ error: 'Server error' })
+  }
+}
+
+const getSelfUser = async (req, res) => {
+  try {
+    const userId = req.user.id
+
+    const { data, error } = await req.supabase
+      .from('user_details')
+      .select(`*,os_type_user:os_type_users (*)`)
+      .eq('auth_user_id', userId)
+      .maybeSingle()
+
+    if (error) {
+      return res.status(400).json({ error: error.message })
+    }
+
+    return res.status(200).json({ user_details: data })
+  } catch (e) {
+    console.error(e)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+}
+
+module.exports = { createUser, getAllUsers, getSelfUser, updateSelfUser }

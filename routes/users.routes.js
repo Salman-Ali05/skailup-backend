@@ -10,8 +10,12 @@ router.post('/', usersControllers.createUser)
 router.get('/', authenticated, isAdmin, usersControllers.getAllUsers)
 // // Get a user by ID
 // router.get('/:id', usersControllers.getUserById)
-// // Update a user by ID
-// router.put('/:id', usersControllers.updateUserById)
+// Get own data
+router.get('/me', authenticated, usersControllers.getSelfUser)
+// Update own data
+router.put('/me', authenticated, usersControllers.updateSelfUser)
+// Update a user by ID
+// router.patch('/:id', authenticated, usersControllers.updateUserById)
 // // Delete a user by ID
 // router.delete('/:id', usersControllers.deleteUserById)
 
