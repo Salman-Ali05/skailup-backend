@@ -46,5 +46,6 @@ app.get('/', (req, res) => {
 app.use('/users', userRoutes)
 app.use('/auth', authRoutes)
 app.use('/os_type_users', os_type_usersRoutes)
+app.use('/programs', require('./routes/programs.routes'))
 
 module.exports = app
