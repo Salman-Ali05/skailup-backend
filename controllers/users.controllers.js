@@ -43,7 +43,6 @@ const createUser = async (req, res) => {
       return res.status(400).json({ error: 'os_type_user is required' })
     }
 
-    // Vérifie que le type existe bien dans options_set.os_type_users
     const { data: osTypeData, error: osTypeError } = await supabaseAdmin
       .schema(OPTIONS_SCHEMA)
       .from('os_type_users')
@@ -73,7 +72,6 @@ const createUser = async (req, res) => {
 
     const authUserId = authData.user.id
 
-    // 2) créer user_details
     const { data: detailsData, error: detailsError } = await supabaseAdmin
       .from('user_details')
       .insert({
