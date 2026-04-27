@@ -1,5 +1,7 @@
 const { supabaseAdmin } = require('../db/supabase')
 
+const OPTIONS_SCHEMA = 'options_set'
+
 /**
  * CREATE USER (ADMIN)
  * - crée auth.users
@@ -21,7 +23,7 @@ const createUser = async (req, res) => {
       is_submit_finalized,
       last_connect,
       time_diff,
-      os_type_user, // OBLIGATOIRE
+      os_type_user,
       photo_url,
       signature_url,
       address,
@@ -41,7 +43,23 @@ const createUser = async (req, res) => {
       return res.status(400).json({ error: 'os_type_user is required' })
     }
 
-    // 1️⃣ créer le user auth (ADMIN)
+    // Vérifie que le type existe bien dans options_set.os_type_users
+    const { data: osTypeData, error: osTypeError } = await supabaseAdmin
+      .schema(OPTIONS_SCHEMA)
+      .from('os_type_users')
+      .select('*')
+      .eq('id', os_type_user)
+      .maybeSingle()
+
+    if (osTypeError) {
+      return res.status(400).json({ error: osTypeError.message })
+    }
+
+    if (!osTypeData) {
+      return res.status(400).json({ error: 'Invalid os_type_user' })
+    }
+
+    // 1) créer le user auth
     const { data: authData, error: authError } =
       await supabaseAdmin.auth.admin.createUser({
         email,
@@ -55,11 +73,11 @@ const createUser = async (req, res) => {
 
     const authUserId = authData.user.id
 
-    // 2️⃣ créer user_details (ADMIN → bypass RLS)
+    // 2) créer user_details
     const { data: detailsData, error: detailsError } = await supabaseAdmin
       .from('user_details')
       .insert({
-        auth_user_id: authUserId,
+        id_auth_user: authUserId,
 
         auth_token: auth_token ?? null,
         first_name: first_name ?? null,
@@ -73,7 +91,7 @@ const createUser = async (req, res) => {
         last_connect: last_connect ?? null,
         time_diff: time_diff ?? null,
 
-        os_type_user, // FK obligatoire
+        os_type_user,
 
         photo_url: photo_url ?? null,
         signature_url: signature_url ?? null,
@@ -91,14 +109,16 @@ const createUser = async (req, res) => {
       .single()
 
     if (detailsError) {
-      // rollback propre
       await supabaseAdmin.auth.admin.deleteUser(authUserId)
       return res.status(400).json({ error: detailsError.message })
     }
 
     return res.status(201).json({
       user: authData.user,
-      user_details: detailsData
+      user_details: {
+        ...detailsData,
+        os_type_user: osTypeData
+      }
     })
   } catch (e) {
     console.error(e)
@@ -108,20 +128,29 @@ const createUser = async (req, res) => {
 
 /**
  * GET ALL USERS (ADMIN)
- * - joint auth.users + user_details
+ * - récupère auth.users
+ * - récupère user_details
+ * - récupère options_set.os_type_users
+ * - merge côté Node
  */
 const getAllUsers = async (req, res) => {
   try {
-    // 1️⃣ récupérer user_details
     const { data: detailsData, error: detailsError } = await supabaseAdmin
-      .from('user_details', 'os_type_users')
-      .select('auth_user_id, first_name, last_name, is_admin_skailup, photo_url, os_type_users(lang_fr)')
+      .from('user_details')
+      .select(`
+        id,
+        id_auth_user,
+        first_name,
+        last_name,
+        is_admin_skailup,
+        photo_url,
+        os_type_user
+      `)
 
     if (detailsError) {
       return res.status(400).json({ error: detailsError.message })
     }
 
-    // 2️⃣ récupérer auth.users
     const { data: authData, error: authError } =
       await supabaseAdmin.auth.admin.listUsers()
 
@@ -129,16 +158,31 @@ const getAllUsers = async (req, res) => {
       return res.status(400).json({ error: authError.message })
     }
 
-    // 3️⃣ merge
+    const { data: osTypesData, error: osTypesError } = await supabaseAdmin
+      .schema(OPTIONS_SCHEMA)
+      .from('os_type_users')
+      .select('*')
+
+    if (osTypesError) {
+      return res.status(400).json({ error: osTypesError.message })
+    }
+
     const users = detailsData.map(details => {
       const authUser = authData.users.find(
-        user => user.id === details.auth_user_id
+        user => user.id === details.id_auth_user
+      )
+
+      const osType = osTypesData.find(
+        type => type.id === details.os_type_user
       )
 
       return {
-        id: details.auth_user_id,
+        id: details.id_auth_user,
         email: authUser?.email ?? null,
-        details
+        details: {
+          ...details,
+          os_type_user: osType ?? null
+        }
       }
     })
 
@@ -149,6 +193,10 @@ const getAllUsers = async (req, res) => {
   }
 }
 
+/**
+ * UPDATE SELF USER
+ * - update uniquement le user connecté
+ */
 const updateSelfUser = async (req, res) => {
   try {
     const userId = req.user.id
@@ -166,6 +214,7 @@ const updateSelfUser = async (req, res) => {
     } = req.body
 
     const patch = {}
+
     if (typeof first_name !== 'undefined') patch.first_name = first_name
     if (typeof last_name !== 'undefined') patch.last_name = last_name
     if (typeof gender !== 'undefined') patch.gender = gender
@@ -176,22 +225,47 @@ const updateSelfUser = async (req, res) => {
     if (typeof address !== 'undefined') patch.address = address
     if (typeof linkedin !== 'undefined') patch.linkedin = linkedin
 
-    const { data, error } = await req.supabaseUser
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ error: 'No fields to update' })
+    }
+
+    const { data: detailsData, error: detailsError } = await req.supabaseUser
       .from('user_details')
       .update(patch)
-      .eq('auth_user_id', userId)
-      .select(`
-        *,
-        os_type_user:os_type_users (*)
-      `)
+      .eq('id_auth_user', userId)
+      .select('*')
       .maybeSingle()
 
-    if (error) return res.status(400).json({ error: error.message })
-    if (!data) return res.status(404).json({ error: 'user_details not found' })
+    if (detailsError) {
+      return res.status(400).json({ error: detailsError.message })
+    }
+
+    if (!detailsData) {
+      return res.status(404).json({ error: 'user_details not found' })
+    }
+
+    let osTypeData = null
+
+    if (detailsData.os_type_user) {
+      const { data: osData, error: osError } = await req.supabaseUser
+        .schema(OPTIONS_SCHEMA)
+        .from('os_type_users')
+        .select('*')
+        .eq('id', detailsData.os_type_user)
+        .maybeSingle()
+
+      if (osError) {
+        return res.status(400).json({ error: osError.message })
+      }
+
+      osTypeData = osData
+    }
 
     return res.status(200).json({
-      user_details: data,
-      os_type_user: data.os_type_user ?? null
+      user_details: {
+        ...detailsData,
+        os_type_user: osTypeData
+      }
     })
   } catch (e) {
     console.error(e)
@@ -199,25 +273,60 @@ const updateSelfUser = async (req, res) => {
   }
 }
 
+/**
+ * GET SELF USER
+ * - récupère le user connecté
+ */
 const getSelfUser = async (req, res) => {
   try {
     const userId = req.user.id
 
-    const { data, error } = await req.supabase
+    const { data: detailsData, error: detailsError } = await req.supabaseUser
       .from('user_details')
-      .select(`*,os_type_user:os_type_users (*)`)
-      .eq('auth_user_id', userId)
+      .select('*')
+      .eq('id_auth_user', userId)
       .maybeSingle()
 
-    if (error) {
-      return res.status(400).json({ error: error.message })
+    if (detailsError) {
+      return res.status(400).json({ error: detailsError.message })
     }
 
-    return res.status(200).json({ user_details: data })
+    if (!detailsData) {
+      return res.status(404).json({ error: 'user_details not found' })
+    }
+
+    let osTypeData = null
+
+    if (detailsData.os_type_user) {
+      const { data: osData, error: osError } = await req.supabaseUser
+        .schema(OPTIONS_SCHEMA)
+        .from('os_type_users')
+        .select('*')
+        .eq('id', detailsData.os_type_user)
+        .maybeSingle()
+
+      if (osError) {
+        return res.status(400).json({ error: osError.message })
+      }
+
+      osTypeData = osData
+    }
+
+    return res.status(200).json({
+      user_details: {
+        ...detailsData,
+        os_type_user: osTypeData
+      }
+    })
   } catch (e) {
     console.error(e)
     return res.status(500).json({ error: 'Internal server error' })
   }
 }
 
-module.exports = { createUser, getAllUsers, getSelfUser, updateSelfUser }
+module.exports = {
+  createUser,
+  getAllUsers,
+  getSelfUser,
+  updateSelfUser
+}
