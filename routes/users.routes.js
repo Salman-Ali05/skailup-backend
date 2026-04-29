@@ -18,5 +18,6 @@ router.put('/me', authenticated, usersControllers.updateSelfUser)
 // router.patch('/:id', authenticated, usersControllers.updateUserById)
 // // Delete a user by ID
 // router.delete('/:id', usersControllers.deleteUserById)
+router.post('/contributor', authenticated, usersControllers.inviteContributor)
 
 module.exports = router

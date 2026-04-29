@@ -5,6 +5,8 @@ const cors = require('cors')
 const userRoutes = require('./routes/users.routes')
 const authRoutes = require('./routes/auth.routes')
 const os_type_usersRoutes = require('./routes/os_type_users.routes')
+const programRoutes = require('./routes/programs.routes')
+const contributorsRoutes = require('./routes/contributors.routes')
 
 const { supabaseAnon } = require('./db/supabase')
 
@@ -46,6 +48,7 @@ app.get('/', (req, res) => {
 app.use('/users', userRoutes)
 app.use('/auth', authRoutes)
 app.use('/os_type_users', os_type_usersRoutes)
-app.use('/programs', require('./routes/programs.routes'))
+app.use('/programs', programRoutes)
+app.use('/contributors', contributorsRoutes)
 
 module.exports = app
