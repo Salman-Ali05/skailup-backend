@@ -50,5 +50,10 @@ app.use('/auth', authRoutes)
 app.use('/os_type_users', os_type_usersRoutes)
 app.use('/programs', programRoutes)
 app.use('/contributors', contributorsRoutes)
+app.use('/structures', require('./routes/structures.routes'))
+app.use('/projects', require('./routes/projects.routes'))
+app.use('/program_projects', require('./routes/program_projects.routes'))
+app.use('/program_contributors', require('./routes/program_contributors.routes'))
+app.use('/tag_param_structure', require('./routes/tag_param_structure.routes'))
 
 module.exports = app
