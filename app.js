@@ -7,6 +7,7 @@ const authRoutes = require('./routes/auth.routes')
 const os_type_usersRoutes = require('./routes/os_type_users.routes')
 const programRoutes = require('./routes/programs.routes')
 const contributorsRoutes = require('./routes/contributors.routes')
+const os_tagsRoutes = require('./routes/os_tags.routes')
 
 const { supabaseAnon } = require('./db/supabase')
 
@@ -50,5 +51,6 @@ app.use('/auth', authRoutes)
 app.use('/os_type_users', os_type_usersRoutes)
 app.use('/programs', programRoutes)
 app.use('/contributors', contributorsRoutes)
+app.use('/os_tags', os_tagsRoutes) // on mettra tout nos OS ici
 
 module.exports = app
