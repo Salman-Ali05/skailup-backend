@@ -1,8 +1,9 @@
 const { supabaseAdmin } = require('../db/supabase')
+const OPTIONS_SCHEMA = 'relational'
 
 const getProgramContributors = async (req, res) => {
     try {
-        const { data, error } = await supabaseAdmin.schema('relational').from('program_contributors').select('*')
+        const { data, error } = await supabaseAdmin.schema(OPTIONS_SCHEMA).from('program_contributors').select('*')
         if (error) {
             return res.status(400).json({ error: error.message })
         }
