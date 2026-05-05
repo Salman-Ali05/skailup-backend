@@ -336,7 +336,6 @@ const inviteContributor = async (req, res) => {
 
     const {
       email,
-      password,
 
       // user_details
       first_name,
@@ -352,6 +351,11 @@ const inviteContributor = async (req, res) => {
       // contributor
       contrib_name,
       logo,
+
+      // tags reçus mais pas traités maintenant
+      Tag1,
+      Tag2,
+      Tag3,
 
       // contributor_details
       code_ape,
@@ -374,7 +378,6 @@ const inviteContributor = async (req, res) => {
       return res.status(400).json({ error: 'email is required' })
     }
 
-    // 1) récupérer la structure du user connecté
     const { data: currentUserDetails, error: currentUserError } = await supabaseAdmin
       .from('user_details')
       .select('id, id_structure')
@@ -391,7 +394,6 @@ const inviteContributor = async (req, res) => {
 
     const id_structure = currentUserDetails.id_structure
 
-    // 2) récupérer OS_type_user = Contributor
     const { data: contributorType, error: contributorTypeError } = await supabaseAdmin
       .schema(OPTIONS_SCHEMA)
       .from('os_type_users')
@@ -407,7 +409,6 @@ const inviteContributor = async (req, res) => {
       return res.status(400).json({ error: 'OS type Contributor not found' })
     }
 
-    // 3) récupérer onboarding "Incomplete" si dispo
     const { data: onboardingIncomplete, error: onboardingError } = await supabaseAdmin
       .schema(OPTIONS_SCHEMA)
       .from('os_onboarding_completed')
@@ -419,8 +420,8 @@ const inviteContributor = async (req, res) => {
       return res.status(400).json({ error: onboardingError.message })
     }
 
-    // 4) créer auth user
-    const tempPassword = password || crypto.randomBytes(16).toString('base64url')
+    // password temporaire pour invitation
+    const tempPassword = crypto.randomBytes(16).toString('base64url')
 
     const { data: authData, error: authError } =
       await supabaseAdmin.auth.admin.createUser({
@@ -436,8 +437,6 @@ const inviteContributor = async (req, res) => {
     const authUserId = authData.user.id
     created.authUserId = authUserId
 
-    // 5) créer user_details
-    // IMPORTANT : id_contributor reste null pour l'instant, car le contributor n'existe pas encore
     const { data: userDetailsData, error: userDetailsError } = await supabaseAdmin
       .from('user_details')
       .insert({
@@ -465,7 +464,6 @@ const inviteContributor = async (req, res) => {
 
     created.userDetailsId = userDetailsData.id
 
-    // 6) créer contributor
     const contributorName =
       contrib_name ||
       [first_name, last_name].filter(Boolean).join(' ') ||
@@ -478,13 +476,9 @@ const inviteContributor = async (req, res) => {
         logo: logo ?? null,
         name: contributorName,
         id_structure,
-
         id_user: authUserId,
-
         Onboarding_completed: onboardingIncomplete?.id ?? null,
-        Tag1: null,
-        Tag2: null,
-        Tag3: null,
+
         id_contributor_details: null
       })
       .select()
@@ -497,7 +491,6 @@ const inviteContributor = async (req, res) => {
 
     created.contributorId = contributorData.id
 
-    // 7) relier user_details -> contributor
     const { data: updatedUserDetails, error: updateUserDetailsError } =
       await supabaseAdmin
         .from('user_details')
@@ -513,7 +506,6 @@ const inviteContributor = async (req, res) => {
       return res.status(400).json({ error: updateUserDetailsError.message })
     }
 
-    // 8) créer contributor_details
     const { data: contributorDetailsData, error: contributorDetailsError } =
       await supabaseAdmin
         .from('contributor_details')
@@ -553,7 +545,6 @@ const inviteContributor = async (req, res) => {
 
     created.contributorDetailsId = contributorDetailsData.id
 
-    // 9) relier contributor -> contributor_details
     const { data: updatedContributor, error: updateContributorError } =
       await supabaseAdmin
         .from('contributors')
@@ -575,7 +566,16 @@ const inviteContributor = async (req, res) => {
       user_details: updatedUserDetails,
       contributor: updatedContributor,
       contributor_details: contributorDetailsData,
-      temporary_password_generated: !password
+
+      // utile en dev / pour mail invitation
+      temporary_password: tempPassword,
+
+      // reçu mais pas encore traité
+      received_tags: {
+        Tag1: Array.isArray(Tag1) ? Tag1 : [],
+        Tag2: Array.isArray(Tag2) ? Tag2 : [],
+        Tag3: Array.isArray(Tag3) ? Tag3 : []
+      }
     })
   } catch (e) {
     console.error(e)
