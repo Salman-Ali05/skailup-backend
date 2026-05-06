@@ -1,6 +1,7 @@
 const { supabaseAdmin } = require('../db/supabase')
 
 const OPTIONS_SCHEMA = 'options_set'
+const RELATIONAL_SCHEMA = 'relational'
 const crypto = require('crypto')
 
 /**
@@ -491,6 +492,24 @@ const inviteContributor = async (req, res) => {
 
     created.contributorId = contributorData.id
 
+    let insertedTags = {
+      Tag1: [],
+      Tag2: [],
+      Tag3: []
+    }
+
+    try {
+      insertedTags = await insertContributorTags({
+        contributorId: contributorData.id,
+        Tag1,
+        Tag2,
+        Tag3
+      })
+    } catch (tagError) {
+      await rollbackInvite(created)
+      return res.status(400).json({ error: tagError.message })
+    }
+
     const { data: updatedUserDetails, error: updateUserDetailsError } =
       await supabaseAdmin
         .from('user_details')
@@ -567,15 +586,9 @@ const inviteContributor = async (req, res) => {
       contributor: updatedContributor,
       contributor_details: contributorDetailsData,
 
-      // utile en dev / pour mail invitation
       temporary_password: tempPassword,
 
-      // reçu mais pas encore traité
-      received_tags: {
-        Tag1: Array.isArray(Tag1) ? Tag1 : [],
-        Tag2: Array.isArray(Tag2) ? Tag2 : [],
-        Tag3: Array.isArray(Tag3) ? Tag3 : []
-      }
+      inserted_tags: insertedTags
     })
   } catch (e) {
     console.error(e)
@@ -584,10 +597,93 @@ const inviteContributor = async (req, res) => {
   }
 }
 
+const normalizeIds = (value) => {
+  if (Array.isArray(value)) {
+    return [...new Set(value.filter(Boolean))]
+  }
+
+  if (value) return [value]
+
+  return []
+}
+
+const insertContributorTags = async ({ contributorId, Tag1, Tag2, Tag3 }) => {
+  const tag1Ids = normalizeIds(Tag1)
+  const tag2Ids = normalizeIds(Tag2)
+  const tag3Ids = normalizeIds(Tag3)
+
+  if (tag1Ids.length > 0) {
+    const { error } = await supabaseAdmin
+      .schema(RELATIONAL_SCHEMA)
+      .from('contributor_os_tag1')
+      .insert(
+        tag1Ids.map((id) => ({
+          id_contributor: contributorId,
+          id_os_tag1: id
+        }))
+      )
+
+    if (error) throw error
+  }
+
+  if (tag2Ids.length > 0) {
+    const { error } = await supabaseAdmin
+      .schema(RELATIONAL_SCHEMA)
+      .from('contributor_os_tag2')
+      .insert(
+        tag2Ids.map((id) => ({
+          id_contributor: contributorId,
+          id_os_tag2: id
+        }))
+      )
+
+    if (error) throw error
+  }
+
+  if (tag3Ids.length > 0) {
+    const { error } = await supabaseAdmin
+      .schema(RELATIONAL_SCHEMA)
+      .from('contributor_os_tag3')
+      .insert(
+        tag3Ids.map((id) => ({
+          id_contributor: contributorId,
+          id_os_tag3: id
+        }))
+      )
+
+    if (error) throw error
+  }
+
+  return {
+    Tag1: tag1Ids,
+    Tag2: tag2Ids,
+    Tag3: tag3Ids
+  }
+}
+
 // In case the contrib creation had a problem, we delete what was already created
 const rollbackInvite = async (created) => {
   try {
-    // casser les liens FK avant delete
+    if (created.contributorId) {
+      await supabaseAdmin
+        .schema('relational')
+        .from('contributor_os_tag1')
+        .delete()
+        .eq('id_contributor', created.contributorId)
+
+      await supabaseAdmin
+        .schema('relational')
+        .from('contributor_os_tag2')
+        .delete()
+        .eq('id_contributor', created.contributorId)
+
+      await supabaseAdmin
+        .schema('relational')
+        .from('contributor_os_tag3')
+        .delete()
+        .eq('id_contributor', created.contributorId)
+    }
+
     if (created.contributorId) {
       await supabaseAdmin
         .from('contributors')
