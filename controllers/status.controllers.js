@@ -2,7 +2,7 @@ const { supabaseAdmin } = require('../db/supabase')
 
 const getStatus = async (req, res) => {
     try {
-        const { data, error } = await supabaseAdmin.from('status').select('*')
+        const { data, error } = await supabaseAdmin.schema('options_set').from('os_status').select('*')
         if (error) {
             return res.status(400).json({ error: error.message })
         }

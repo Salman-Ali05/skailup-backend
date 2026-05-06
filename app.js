@@ -13,6 +13,7 @@ const projectRoutes = require('./routes/projects.routes')
 const program_projectsRoutes = require('./routes/program_projects.routes')
 const program_contributorsRoutes = require('./routes/program_contributors.routes')
 const tag_param_structureRoutes = require('./routes/tag_param_structure.routes')
+const statusRoutes = require('./routes/status.routes')
 
 const { supabaseAnon } = require('./db/supabase')
 
@@ -62,6 +63,7 @@ app.use('/projects', projectRoutes)
 app.use('/program_projects', program_projectsRoutes)
 app.use('/program_contributors', program_contributorsRoutes)
 app.use('/tag_param_structure', tag_param_structureRoutes)
+app.use('/os_status', statusRoutes)
 
 
 module.exports = app
