@@ -1,8 +1,8 @@
-const { supabaseAdmin } = require('../db/supabase')
+const { supabaseAdmin } = require('../../db/supabase')
 
-const getOS_type_users = async (req, res) => {
+const getStatus = async (req, res) => {
     try {
-        const { data, error } = await supabaseAdmin.from('os_type_users').select('*')
+        const { data, error } = await supabaseAdmin.schema('options_set').from('os_status').select('*')
         if (error) {
             return res.status(400).json({ error: error.message })
         }
@@ -13,4 +13,4 @@ const getOS_type_users = async (req, res) => {
     }
 }
 
-module.exports = { getOS_type_users }
+module.exports = { getStatus }
