@@ -32,6 +32,8 @@ const getPrograms = async (req, res) => {
         )
 
         const statusIds = unique(programsData.map((program) => program.id_status))
+        
+        const projectIds = unique(programsData.map((program) => program.id_project))
 
         // Fetch related data in batches
         let structuresData = []
@@ -41,6 +43,7 @@ const getPrograms = async (req, res) => {
         let allTagParamStructuresData = []
         let programContributorsData = []
         let programProjectsData = []
+        let projectsData = []
 
         // Fetch structures
         if (structureIds.length > 0) {
@@ -140,6 +143,21 @@ const getPrograms = async (req, res) => {
             }
 
             programProjectsData = data ?? []
+        }
+
+        // Fetch projects
+        if (programIds.length > 0) {
+            const { data, error } = await supabaseAdmin
+                .schema(RELATIONAL_SCHEMA)
+                .from('projects')
+                .select('*')
+                .in('id_program', programIds)
+
+            if (error) {
+                return res.status(400).json({ error: error.message })
+            }
+
+            projectsData = data ?? []
         }
 
         // Combine data into final program objects
