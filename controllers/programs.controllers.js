@@ -32,7 +32,7 @@ const getPrograms = async (req, res) => {
         )
 
         const statusIds = unique(programsData.map((program) => program.id_status))
-        
+
         const projectIds = unique(programsData.map((program) => program.id_project))
 
         // Fetch related data in batches
@@ -148,10 +148,8 @@ const getPrograms = async (req, res) => {
         // Fetch projects
         if (programIds.length > 0) {
             const { data, error } = await supabaseAdmin
-                .schema(RELATIONAL_SCHEMA)
                 .from('projects')
                 .select('*')
-                .in('id_program', programIds)
 
             if (error) {
                 return res.status(400).json({ error: error.message })
@@ -229,11 +227,11 @@ const getProgramsStatusCounts = async (req, res) => {
             return acc
         }, {})
 
-        ;(data ?? []).forEach((row) => {
-            if (row?.id_status && counts[row.id_status] !== undefined) {
-                counts[row.id_status] += 1
-            }
-        })
+            ; (data ?? []).forEach((row) => {
+                if (row?.id_status && counts[row.id_status] !== undefined) {
+                    counts[row.id_status] += 1
+                }
+            })
 
         if (statusIds.length === 1) {
             return res.status(200).json({ count: counts[statusIds[0]] || 0 })
