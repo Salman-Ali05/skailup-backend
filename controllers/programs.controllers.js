@@ -232,7 +232,7 @@ const getProgramsStatusCounts = async (req, res) => {
                     counts[row.id_status] += 1
                 }
             })
-
+            
         if (statusIds.length === 1) {
             return res.status(200).json({ count: counts[statusIds[0]] || 0 })
         }
