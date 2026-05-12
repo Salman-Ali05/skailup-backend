@@ -2,8 +2,6 @@ const { supabaseAdmin } = require('../db/supabase')
 
 const OPTIONS_SCHEMA = 'options_set'
 const RELATIONAL_SCHEMA = 'relational'
-const AUTH_SCHEMA = 'auth'
-
 
 const unique = (items) => [...new Set(items.filter((value) => value != null))]
 
@@ -21,15 +19,10 @@ const getProjects = async (req, res) => {
             return res.status(200).json([])
         }
 
-        // Extract unique IDs for related data
         const projectIds = unique(projectsData.map((project) => project.id))
         const tagProjectIds = unique(projectsData.map((project) => project.id_tag_project))
         const projectDetailIds = unique(projectsData.map((project) => project.id_project_detail))
-        const programIds = []
-        const usersIds = []
 
-
-        // Fetch related data in batches
         let tagProjectsData = []
         let projectDetailsData = []
         let projectProgramsData = []
@@ -37,8 +30,6 @@ const getProjects = async (req, res) => {
         let projectUsersData = []
         let usersData = []
 
-
-        // Fetch structures
         if (tagProjectIds.length > 0) {
             const { data, error } = await supabaseAdmin
                 .schema(OPTIONS_SCHEMA)
@@ -53,7 +44,6 @@ const getProjects = async (req, res) => {
             tagProjectsData = data ?? []
         }
 
-        // Fetch project details
         if (projectDetailIds.length > 0) {
             const { data, error } = await supabaseAdmin
                 .from('project_details')
@@ -67,7 +57,6 @@ const getProjects = async (req, res) => {
             projectDetailsData = data ?? []
         }
 
-        // Fetch project_programs
         if (projectIds.length > 0) {
             const { data, error } = await supabaseAdmin
                 .schema(RELATIONAL_SCHEMA)
@@ -82,7 +71,6 @@ const getProjects = async (req, res) => {
             projectProgramsData = data ?? []
         }
 
-        // Fetch project_users
         if (projectIds.length > 0) {
             const { data, error } = await supabaseAdmin
                 .schema(RELATIONAL_SCHEMA)
@@ -97,13 +85,13 @@ const getProjects = async (req, res) => {
             projectUsersData = data ?? []
         }
 
-        // Fetch programs
         const linkedProgramIds = unique(projectProgramsData.map((link) => link.id_program))
+
         if (linkedProgramIds.length > 0) {
             const { data, error } = await supabaseAdmin
                 .from('programs')
                 .select('*')
-            .in('id', linkedProgramIds)
+                .in('id', linkedProgramIds)
 
             if (error) {
                 return res.status(400).json({ error: error.message })
@@ -112,23 +100,21 @@ const getProjects = async (req, res) => {
             programsData = data ?? []
         }
 
-        // Fetch users
         const linkedUserIds = unique(projectUsersData.map((link) => link.id_user))
-        if (linkedUserIds.length > 0) {
-            const { data, error } = await supabaseAdmin
-                .schema(AUTH_SCHEMA)
-                .from('users')
-                .select('*')
-            .in('id', linkedUserIds)
 
-            if (error) {
-                return res.status(400).json({ error: error.message })
+        if (linkedUserIds.length > 0) {
+            const { data: authData, error: authError } =
+                await supabaseAdmin.auth.admin.listUsers()
+
+            if (authError) {
+                return res.status(400).json({ error: authError.message })
             }
 
-            usersData = data ?? []
+            usersData = authData.users.filter((user) =>
+                linkedUserIds.includes(user.id)
+            )
         }
 
-        // Combine data into final program objects
         const programsById = new Map(programsData.map((program) => [program.id, program]))
         const usersById = new Map(usersData.map((user) => [user.id, user]))
 
@@ -136,21 +122,35 @@ const getProjects = async (req, res) => {
             const tagProject = tagProjectsData.find(
                 (item) => item.id === project.id_tag_project
             )
+
             const projectDetail = projectDetailsData.find(
                 (item) => item.id === project.id_project_detail
             )
+
             const projectPrograms = projectProgramsData
                 .filter((link) => link.id_project === project.id)
                 .map((link) => ({
                     ...link,
                     program: programsById.get(link.id_program) ?? null
                 }))
+
             const projectUsers = projectUsersData
                 .filter((link) => link.id_project === project.id)
-                .map((link) => ({
-                    ...link,
-                    user: usersById.get(link.id_user) ?? null
-                }))
+                .map((link) => {
+                    const authUser = usersById.get(link.id_user)
+
+                    return {
+                        ...link,
+                        user: authUser
+                            ? {
+                                id: authUser.id,
+                                email: authUser.email,
+                                created_at: authUser.created_at,
+                                last_sign_in_at: authUser.last_sign_in_at
+                            }
+                            : null
+                    }
+                })
 
             return {
                 ...project,
@@ -162,15 +162,16 @@ const getProjects = async (req, res) => {
         })
 
         return res.status(200).json(projects)
-
     } catch (e) {
         console.error(e)
         return res.status(500).json({ error: 'Server error' })
     }
+}
 
-    const getProjectsStatusCounts = async (req, res) => {
+const getProjectsStatusCounts = async (req, res) => {
     try {
         const rawIds = req.query.statusIds || req.query.statusId || ''
+
         const statusIds = rawIds
             .split(',')
             .map((value) => value.trim())
@@ -211,6 +212,7 @@ const getProjects = async (req, res) => {
     }
 }
 
+module.exports = {
+    getProjects,
+    getProjectsStatusCounts
 }
-
-module.exports = { getProjects }
