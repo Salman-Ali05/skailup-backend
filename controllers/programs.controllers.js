@@ -33,8 +33,6 @@ const getPrograms = async (req, res) => {
 
         const statusIds = unique(programsData.map((program) => program.id_status))
 
-        const projectIds = unique(programsData.map((program) => program.id_project))
-
         // Fetch related data in batches
         let structuresData = []
         let statusesData = []
@@ -44,6 +42,8 @@ const getPrograms = async (req, res) => {
         let programContributorsData = []
         let programProjectsData = []
         let projectsData = []
+        let contributorsData = []
+        let contributorUserDetailsData = []
 
         // Fetch structures
         if (structureIds.length > 0) {
@@ -145,6 +145,44 @@ const getPrograms = async (req, res) => {
             programProjectsData = data ?? []
         }
 
+        // Fetch contributors used by program_contributors
+        if (programContributorsData.length > 0) {
+            const contributorIds = unique(
+                programContributorsData.map((link) => link.id_contributor)
+            )
+
+            if (contributorIds.length > 0) {
+                const { data, error } = await supabaseAdmin
+                    .from('contributors')
+                    .select('*, contributor_details:id_contributor_details (*)')
+                    .in('id', contributorIds)
+
+                if (error) {
+                    return res.status(400).json({ error: error.message })
+                }
+
+                contributorsData = data ?? []
+
+                const contributorAuthUserIds = unique(
+                    contributorsData.map((contributor) => contributor.id_user)
+                )
+
+                if (contributorAuthUserIds.length > 0) {
+                    const { data: userDetailsData, error: userDetailsError } =
+                        await supabaseAdmin
+                            .from('user_details')
+                            .select('*')
+                            .in('id_auth_user', contributorAuthUserIds)
+
+                    if (userDetailsError) {
+                        return res.status(400).json({ error: userDetailsError.message })
+                    }
+
+                    contributorUserDetailsData = userDetailsData ?? []
+                }
+            }
+        }
+
         // Fetch projects
         if (programIds.length > 0) {
             const { data, error } = await supabaseAdmin
@@ -158,6 +196,31 @@ const getPrograms = async (req, res) => {
             projectsData = data ?? []
         }
 
+        const contributors = contributorsData.map((contributor) => {
+            const userDetails = contributorUserDetailsData.find(
+                (details) => details.id_auth_user === contributor.id_user
+            )
+
+            return {
+                ...contributor,
+                user_details: userDetails ?? null
+            }
+        })
+
+        const contributorById = new Map(
+            contributors.map((contributor) => [contributor.id, contributor])
+        )
+
+        const programContributorsEnriched = programContributorsData.map((link) => {
+            const contributor = contributorById.get(link.id_contributor) ?? null
+
+            return {
+                ...link,
+                contributor,
+                contributors: contributor
+            }
+        })
+
         // Combine data into final program objects
         const programs = programsData.map((program) => {
             const structure = structuresData.find(
@@ -169,7 +232,7 @@ const getPrograms = async (req, res) => {
             const tag_param_structure = tagParamStructuresData.find(
                 (item) => item.id === program.id_param_structure
             )
-            const programContributors = programContributorsData.filter(
+            const programContributors = programContributorsEnriched.filter(
                 (link) => link.id_program === program.id
             )
             const programProjects = programProjectsData.filter(
@@ -191,7 +254,9 @@ const getPrograms = async (req, res) => {
         return res.status(200).json({
             programs,
             programProjects: programProjectsData,
-            programContributors: programContributorsData,
+            programContributors: programContributorsEnriched,
+            projects: projectsData,
+            contributors,
             statusOptions: allStatusesData,
             tagParamStructures: allTagParamStructuresData
         })

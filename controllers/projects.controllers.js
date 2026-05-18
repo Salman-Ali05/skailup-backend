@@ -29,6 +29,7 @@ const getProjects = async (req, res) => {
         let programsData = []
         let projectUsersData = []
         let usersData = []
+        let userDetailsData = []
 
         if (tagProjectIds.length > 0) {
             const { data, error } = await supabaseAdmin
@@ -115,8 +116,24 @@ const getProjects = async (req, res) => {
             )
         }
 
+        if (linkedUserIds.length > 0) {
+            const { data, error } = await supabaseAdmin
+                .from('user_details')
+                .select('*')
+                .in('id_auth_user', linkedUserIds)
+
+            if (error) {
+                return res.status(400).json({ error: error.message })
+            }
+
+            userDetailsData = data ?? []
+        }
+
         const programsById = new Map(programsData.map((program) => [program.id, program]))
         const usersById = new Map(usersData.map((user) => [user.id, user]))
+        const userDetailsByAuthId = new Map(
+            userDetailsData.map((details) => [details.id_auth_user, details])
+        )
 
         const projects = projectsData.map((project) => {
             const tagProject = tagProjectsData.find(
@@ -138,6 +155,7 @@ const getProjects = async (req, res) => {
                 .filter((link) => link.id_project === project.id)
                 .map((link) => {
                     const authUser = usersById.get(link.id_user)
+                    const userDetails = userDetailsByAuthId.get(link.id_user)
 
                     return {
                         ...link,
@@ -148,7 +166,8 @@ const getProjects = async (req, res) => {
                                 created_at: authUser.created_at,
                                 last_sign_in_at: authUser.last_sign_in_at
                             }
-                            : null
+                            : null,
+                        user_details: userDetails ?? null
                     }
                 })
 
