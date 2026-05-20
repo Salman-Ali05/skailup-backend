@@ -1,4 +1,5 @@
 const { supabaseAdmin } = require('../db/supabase')
+const { get } = require('../routes/programs.routes')
 
 const OPTIONS_SCHEMA = 'options_set'
 const RELATIONAL_SCHEMA = 'relational'
@@ -231,7 +232,59 @@ const getProjectsStatusCounts = async (req, res) => {
     }
 }
 
+const createProject = async (req, res) => {
+    try {
+        const { name, id_tag_project, email} = req.body
+
+        if (!name || !id_tag_project || !email) {
+            return res.status(400).json({ error: 'Missing required fields' })
+        }
+
+        const { data, error } = await supabaseAdmin
+            .from('projects')
+            .insert([{ name, id_tag_project, email}])
+            .select('*')
+            .single()
+
+        if (error) {
+            return res.status(400).json({ error: error.message })
+        }
+
+        return res.status(201).json(data)
+    } catch (e) {
+        console.error(e)
+        return res.status(500).json({ error: 'Server error' })
+    }
+}
+
+const createProjectUser = async (req, res) => {
+    try {
+        const { id_project, id_user} = req.body
+
+        if (!id_project || !id_user) {
+            return res.status(400).json({ error: 'Missing required fields' })
+        }
+
+        const { data, error } = await supabaseAdmin
+            .from('project_users')
+            .insert([{ id_project, id_user}])
+            .select('*')
+            .single()
+
+        if (error) {
+            return res.status(400).json({ error: error.message })
+        }
+
+        return res.status(201).json(data)
+    } catch (e) {
+        console.error(e)
+        return res.status(500).json({ error: 'Server error' })
+    }
+}
+
 module.exports = {
     getProjects,
-    getProjectsStatusCounts
+    getProjectsStatusCounts,
+    createProject,
+    createProjectUser
 }
