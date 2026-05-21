@@ -727,10 +727,335 @@ const rollbackInvite = async (created) => {
   }
 }
 
+const inviteProject = async (req, res) => {
+  const created = {
+    projectId: null,
+    projectDetailsId: null,
+    authUserIds: [],
+    userDetailsIds: [],
+    projectUserRelationIds: []
+  }
+
+  try {
+    const currentAuthUserId = req.user.id
+
+    const {
+      name,
+      id_tag_project,
+
+      // project_details
+      description,
+
+      // note interne venant du front
+      note,
+
+      // liste venant du front
+      participants,
+
+      // optionnel si ton code os_type_users n'est pas "Project"
+      project_user_type_code
+    } = req.body
+
+    if (!name || !id_tag_project) {
+      return res.status(400).json({ error: 'name and id_tag_project are required' })
+    }
+
+    if (!Array.isArray(participants) || participants.length === 0) {
+      return res.status(400).json({ error: 'participants must be a non-empty array' })
+    }
+
+    const cleanedParticipants = participants.map((participant) => ({
+      email: participant?.email?.trim()?.toLowerCase(),
+      first_name: participant?.first_name?.trim() || null,
+      last_name: participant?.last_name?.trim() || null
+    }))
+
+    const invalidParticipant = cleanedParticipants.find(
+      (participant) =>
+        !participant.email ||
+        !participant.first_name ||
+        !participant.last_name
+    )
+
+    if (invalidParticipant) {
+      return res.status(400).json({
+        error: 'Each participant must have email, first_name and last_name'
+      })
+    }
+
+    const uniqueEmails = new Set(cleanedParticipants.map((participant) => participant.email))
+
+    if (uniqueEmails.size !== cleanedParticipants.length) {
+      return res.status(400).json({ error: 'Duplicate participant emails are not allowed' })
+    }
+
+    const { data: currentUserDetails, error: currentUserError } = await supabaseAdmin
+      .from('user_details')
+      .select('id, id_structure')
+      .eq('id_auth_user', currentAuthUserId)
+      .maybeSingle()
+
+    if (currentUserError) {
+      return res.status(400).json({ error: currentUserError.message })
+    }
+
+    if (!currentUserDetails?.id_structure) {
+      return res.status(400).json({ error: 'Current user has no structure' })
+    }
+
+    const id_structure = currentUserDetails.id_structure
+
+    const typeCode = project_user_type_code || 'Project'
+
+    const { data: projectUserType, error: projectUserTypeError } = await supabaseAdmin
+      .schema(OPTIONS_SCHEMA)
+      .from('os_type_users')
+      .select('id, code, lang_fr')
+      .eq('code', typeCode)
+      .maybeSingle()
+
+    if (projectUserTypeError) {
+      return res.status(400).json({ error: projectUserTypeError.message })
+    }
+
+    if (!projectUserType) {
+      return res.status(400).json({
+        error: `OS type ${typeCode} not found`
+      })
+    }
+
+    const primaryParticipant = cleanedParticipants[0]
+
+    /**
+     * 1) Create project
+     *
+     * i = 0 n'existe pas encore ici, donc id_user est null au début.
+     * On le mettra à jour juste après la création du premier auth.users.
+     */
+    const { data: projectData, error: projectError } = await supabaseAdmin
+      .from('projects')
+      .insert({
+        name,
+        id_tag_project,
+        email: primaryParticipant.email,
+        id_structure,
+        id_user: null,
+        id_project_details: null,
+        id_tag_project: id_tag_project ?? null
+      })
+      .select()
+      .single()
+
+    if (projectError) {
+      return res.status(400).json({ error: projectError.message })
+    }
+
+    created.projectId = projectData.id
+
+    /**
+     * 2) Create project_details
+     *
+     * Ici je mets `note` dans description si description est vide.
+     * Si tu as une colonne spécifique `note`, remplace la ligne description.
+     */
+    const { data: projectDetailsData, error: projectDetailsError } = await supabaseAdmin
+      .from('project_details')
+      .insert({
+        id_structure,
+        description: description ?? note ?? null,
+      })
+      .select()
+      .single()
+
+    if (projectDetailsError) {
+      await rollbackInviteProject(created)
+      return res.status(400).json({ error: projectDetailsError.message })
+    }
+
+    created.projectDetailsId = projectDetailsData.id
+
+    const { data: projectWithDetails, error: updateProjectDetailsError } = await supabaseAdmin
+      .from('projects')
+      .update({
+        id_project_details: projectDetailsData.id
+      })
+      .eq('id', projectData.id)
+      .select()
+      .single()
+
+    if (updateProjectDetailsError) {
+      await rollbackInviteProject(created)
+      return res.status(400).json({ error: updateProjectDetailsError.message })
+    }
+
+    let finalProject = projectWithDetails
+
+    const invitedUsers = []
+
+    /**
+     * 3) Loop users
+     *
+     * Pour chaque participant :
+     * - create auth.users
+     * - create public.user_details
+     * - si i === 0, update projects.id_user avec CE user
+     * - create relational.project_users
+     */
+    for (let i = 0; i < cleanedParticipants.length; i += 1) {
+      const participant = cleanedParticipants[i]
+
+      const tempPassword = crypto.randomBytes(16).toString('base64url')
+
+      const { data: authData, error: authError } =
+        await supabaseAdmin.auth.admin.createUser({
+          email: participant.email,
+          password: tempPassword,
+          email_confirm: true
+        })
+
+      if (authError) {
+        await rollbackInviteProject(created)
+        return res.status(400).json({ error: authError.message })
+      }
+
+      const authUserId = authData.user.id
+      created.authUserIds.push(authUserId)
+
+      const { data: userDetailsData, error: userDetailsError } = await supabaseAdmin
+        .from('user_details')
+        .insert({
+          id_auth_user: authUserId,
+          first_name: participant.first_name,
+          last_name: participant.last_name,
+          os_type_user: projectUserType.id,
+          id_structure
+        })
+        .select()
+        .single()
+
+      if (userDetailsError) {
+        await rollbackInviteProject(created)
+        return res.status(400).json({ error: userDetailsError.message })
+      }
+
+      created.userDetailsIds.push(userDetailsData.id)
+
+      if (i === 0) {
+        const { data: updatedProject, error: updateProjectUserError } = await supabaseAdmin
+          .from('projects')
+          .update({
+            id_user: authUserId
+          })
+          .eq('id', projectData.id)
+          .select()
+          .single()
+
+        if (updateProjectUserError) {
+          await rollbackInviteProject(created)
+          return res.status(400).json({ error: updateProjectUserError.message })
+        }
+
+        finalProject = updatedProject
+      }
+
+      const { data: projectUserRelationData, error: projectUserRelationError } =
+        await supabaseAdmin
+          .schema(RELATIONAL_SCHEMA)
+          .from('project_users')
+          .insert({
+            id_project: projectData.id,
+            id_user: authUserId
+          })
+          .select()
+          .single()
+
+      if (projectUserRelationError) {
+        await rollbackInviteProject(created)
+        return res.status(400).json({ error: projectUserRelationError.message })
+      }
+
+      created.projectUserRelationIds.push(projectUserRelationData.id)
+
+      invitedUsers.push({
+        user: {
+          id: authData.user.id,
+          email: authData.user.email,
+          created_at: authData.user.created_at
+        },
+        user_details: userDetailsData,
+        project_user: projectUserRelationData,
+        temporary_password: tempPassword,
+        is_project_owner: i === 0
+      })
+    }
+
+    return res.status(201).json({
+      message: 'Project invited successfully',
+      project: finalProject,
+      project_details: projectDetailsData,
+      invited_users: invitedUsers
+    })
+  } catch (e) {
+    console.error(e)
+    await rollbackInviteProject(created)
+    return res.status(500).json({ error: 'Server error' })
+  }
+}
+
+const rollbackInviteProject = async (created) => {
+  try {
+    if (created.projectId) {
+      await supabaseAdmin
+        .schema(RELATIONAL_SCHEMA)
+        .from('project_users')
+        .delete()
+        .eq('id_project', created.projectId)
+    }
+
+    if (created.projectId) {
+      await supabaseAdmin
+        .from('projects')
+        .update({
+          id_user: null,
+          id_project_details: null
+        })
+        .eq('id', created.projectId)
+    }
+
+    if (created.projectId) {
+      await supabaseAdmin
+        .from('projects')
+        .delete()
+        .eq('id', created.projectId)
+    }
+
+    if (created.projectDetailsId) {
+      await supabaseAdmin
+        .from('project_details')
+        .delete()
+        .eq('id', created.projectDetailsId)
+    }
+
+    if (created.userDetailsIds.length > 0) {
+      await supabaseAdmin
+        .from('user_details')
+        .delete()
+        .in('id', created.userDetailsIds)
+    }
+
+    for (const authUserId of created.authUserIds) {
+      await supabaseAdmin.auth.admin.deleteUser(authUserId)
+    }
+  } catch (e) {
+    console.error('Rollback invite project failed:', e)
+  }
+}
+
 module.exports = {
   createUser,
   getAllUsers,
   getSelfUser,
   updateSelfUser,
-  inviteContributor
+  inviteContributor,
+  inviteProject
 }

@@ -1,16 +1,72 @@
 const { supabaseAdmin } = require('../db/supabase')
-const { get } = require('../routes/programs.routes')
 
 const OPTIONS_SCHEMA = 'options_set'
 const RELATIONAL_SCHEMA = 'relational'
 
 const unique = (items) => [...new Set(items.filter((value) => value != null))]
 
+const getCurrentUserDetails = async (req) => {
+    const currentAuthUserId = req.user?.id
+
+    if (!currentAuthUserId) {
+        return {
+            data: null,
+            error: {
+                status: 401,
+                message: 'Unauthorized'
+            }
+        }
+    }
+
+    const { data, error } = await supabaseAdmin
+        .from('user_details')
+        .select('id, id_structure')
+        .eq('id_auth_user', currentAuthUserId)
+        .maybeSingle()
+
+    if (error) {
+        return {
+            data: null,
+            error: {
+                status: 400,
+                message: error.message
+            }
+        }
+    }
+
+    if (!data?.id_structure) {
+        return {
+            data: null,
+            error: {
+                status: 400,
+                message: 'Current user has no structure'
+            }
+        }
+    }
+
+    return {
+        data,
+        error: null
+    }
+}
+
 const getProjects = async (req, res) => {
     try {
+        const { data: currentUserDetails, error: currentUserError } =
+            await getCurrentUserDetails(req)
+
+        if (currentUserError) {
+            return res
+                .status(currentUserError.status)
+                .json({ error: currentUserError.message })
+        }
+
+        const id_structure = currentUserDetails.id_structure
+
         const { data: projectsData, error: projectsError } = await supabaseAdmin
             .from('projects')
             .select('*')
+            .eq('id_structure', id_structure)
 
         if (projectsError) {
             return res.status(400).json({ error: projectsError.message })
@@ -87,7 +143,9 @@ const getProjects = async (req, res) => {
             projectUsersData = data ?? []
         }
 
-        const linkedProgramIds = unique(projectProgramsData.map((link) => link.id_program))
+        const linkedProgramIds = unique(
+            projectProgramsData.map((link) => link.id_program)
+        )
 
         if (linkedProgramIds.length > 0) {
             const { data, error } = await supabaseAdmin
@@ -102,7 +160,9 @@ const getProjects = async (req, res) => {
             programsData = data ?? []
         }
 
-        const linkedUserIds = unique(projectUsersData.map((link) => link.id_user))
+        const linkedUserIds = unique(
+            projectUsersData.map((link) => link.id_user)
+        )
 
         if (linkedUserIds.length > 0) {
             const { data: authData, error: authError } =
@@ -130,33 +190,38 @@ const getProjects = async (req, res) => {
             userDetailsData = data ?? []
         }
 
-        const programsById = new Map(programsData.map((program) => [program.id, program]))
-        const usersById = new Map(usersData.map((user) => [user.id, user]))
-        const userDetailsByAuthId = new Map(
-            userDetailsData.map((details) => [details.id_auth_user, details])
-        )
-
         const projects = projectsData.map((project) => {
             const tagProject = tagProjectsData.find(
-                (item) => item.id === project.id_tag_project
+                (tag) => tag.id === project.id_tag_project
             )
 
             const projectDetail = projectDetailsData.find(
-                (item) => item.id === project.id_project_detail
+                (detail) => detail.id === project.id_project_detail
             )
 
             const projectPrograms = projectProgramsData
                 .filter((link) => link.id_project === project.id)
-                .map((link) => ({
-                    ...link,
-                    program: programsById.get(link.id_program) ?? null
-                }))
+                .map((link) => {
+                    const program = programsData.find(
+                        (program) => program.id === link.id_program
+                    )
+
+                    return {
+                        ...link,
+                        program: program ?? null
+                    }
+                })
 
             const projectUsers = projectUsersData
                 .filter((link) => link.id_project === project.id)
                 .map((link) => {
-                    const authUser = usersById.get(link.id_user)
-                    const userDetails = userDetailsByAuthId.get(link.id_user)
+                    const authUser = usersData.find(
+                        (user) => user.id === link.id_user
+                    )
+
+                    const userDetails = userDetailsData.find(
+                        (details) => details.id_auth_user === link.id_user
+                    )
 
                     return {
                         ...link,
@@ -190,6 +255,17 @@ const getProjects = async (req, res) => {
 
 const getProjectsStatusCounts = async (req, res) => {
     try {
+        const { data: currentUserDetails, error: currentUserError } =
+            await getCurrentUserDetails(req)
+
+        if (currentUserError) {
+            return res
+                .status(currentUserError.status)
+                .json({ error: currentUserError.message })
+        }
+
+        const id_structure = currentUserDetails.id_structure
+
         const rawIds = req.query.statusIds || req.query.statusId || ''
 
         const statusIds = rawIds
@@ -204,6 +280,7 @@ const getProjectsStatusCounts = async (req, res) => {
         const { data, error } = await supabaseAdmin
             .from('projects')
             .select('id_status')
+            .eq('id_structure', id_structure)
             .in('id_status', statusIds)
 
         if (error) {
@@ -215,11 +292,11 @@ const getProjectsStatusCounts = async (req, res) => {
             return acc
         }, {})
 
-            ; (data ?? []).forEach((row) => {
-                if (row?.id_status && counts[row.id_status] !== undefined) {
-                    counts[row.id_status] += 1
-                }
-            })
+        ;(data ?? []).forEach((row) => {
+            if (row?.id_status && counts[row.id_status] !== undefined) {
+                counts[row.id_status] += 1
+            }
+        })
 
         if (statusIds.length === 1) {
             return res.status(200).json({ count: counts[statusIds[0]] || 0 })
@@ -232,59 +309,7 @@ const getProjectsStatusCounts = async (req, res) => {
     }
 }
 
-const createProject = async (req, res) => {
-    try {
-        const { name, id_tag_project, email} = req.body
-
-        if (!name || !id_tag_project || !email) {
-            return res.status(400).json({ error: 'Missing required fields' })
-        }
-
-        const { data, error } = await supabaseAdmin
-            .from('projects')
-            .insert([{ name, id_tag_project, email}])
-            .select('*')
-            .single()
-
-        if (error) {
-            return res.status(400).json({ error: error.message })
-        }
-
-        return res.status(201).json(data)
-    } catch (e) {
-        console.error(e)
-        return res.status(500).json({ error: 'Server error' })
-    }
-}
-
-const createProjectUser = async (req, res) => {
-    try {
-        const { id_project, id_user} = req.body
-
-        if (!id_project || !id_user) {
-            return res.status(400).json({ error: 'Missing required fields' })
-        }
-
-        const { data, error } = await supabaseAdmin
-            .from('project_users')
-            .insert([{ id_project, id_user}])
-            .select('*')
-            .single()
-
-        if (error) {
-            return res.status(400).json({ error: error.message })
-        }
-
-        return res.status(201).json(data)
-    } catch (e) {
-        console.error(e)
-        return res.status(500).json({ error: 'Server error' })
-    }
-}
-
 module.exports = {
     getProjects,
-    getProjectsStatusCounts,
-    createProject,
-    createProjectUser
+    getProjectsStatusCounts
 }
