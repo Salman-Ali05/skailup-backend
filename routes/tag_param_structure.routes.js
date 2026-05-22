@@ -1,6 +1,6 @@
 const express = require('express')
 const router = express.Router()
-const tag_param_structure_controller = require('../controllers/tag_param_structure.controllers')
+const tagParamStructuresControllers = require('../controllers/tag_param_structure.controllers')
 
-router.get('/', tag_param_structure_controller.getTagParamStructures);
+router.get('/', tagParamStructuresControllers.getTagParamStructures);
 module.exports = router

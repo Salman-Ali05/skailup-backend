@@ -9,9 +9,7 @@ const contributorsRoutes = require('./routes/contributors.routes')
 const os_tagsRoutes = require('./routes/os_tags.routes')
 const structureRoutes = require('./routes/structures.routes')
 const projectRoutes = require('./routes/projects.routes')
-const program_projectsRoutes = require('./routes/program_projects.routes')
-const program_contributorsRoutes = require('./routes/program_contributors.routes')
-const tag_param_structureRoutes = require('./routes/tag_param_structure.routes')
+const tagParamRoutes = require('./routes/tag_param_structure.routes')
 
 const { supabaseAnon } = require('./db/supabase')
 
@@ -57,8 +55,6 @@ app.use('/contributors', contributorsRoutes)
 app.use('/os_tags', os_tagsRoutes) // on mettra tout nos OS ici
 app.use('/structures', structureRoutes)
 app.use('/projects', projectRoutes)
-app.use('/program_projects', program_projectsRoutes)
-app.use('/program_contributors', program_contributorsRoutes)
-app.use('/tag_param_structure', tag_param_structureRoutes)
+app.use('/tag_param_structure', tagParamRoutes)
 
 module.exports = app

@@ -1,9 +1,12 @@
 const express = require('express')
 const router = express.Router()
-const programs_contoller = require('../controllers/programs.controllers')
+const programsControllers = require('../controllers/programs.controllers')
+const { authenticated } = require('../middlewares/authenticated.middleware')
 
-router.get('/', programs_contoller.getPrograms);
-router.get('/count/by-status', programs_contoller.getProgramsStatusCounts);
-router.post('/', programs_contoller.createProgram);
-router.put('/:id', programs_contoller.updateProgram);
+router.use(authenticated)
+
+router.get('/', programsControllers.getPrograms);
+router.get('/count/by-status', programsControllers.getProgramsStatusCounts);
+router.post('/', programsControllers.createProgram);
+router.put('/:id', programsControllers.updateProgram);
 module.exports = router

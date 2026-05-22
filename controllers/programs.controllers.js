@@ -1,121 +1,163 @@
 const { supabaseAdmin } = require('../db/supabase')
-const { all } = require('../routes/programs.routes')
 
 const OPTIONS_SCHEMA = 'options_set'
 const RELATIONAL_SCHEMA = 'relational'
 
 const unique = (arr) => [...new Set(arr.filter(Boolean))]
 
+const getCurrentUserDetails = async (req) => {
+    const currentAuthUserId = req.user?.id
+
+    if (!currentAuthUserId) {
+        return {
+            data: null,
+            error: {
+                status: 401,
+                message: 'Unauthorized'
+            }
+        }
+    }
+
+    const { data, error } = await supabaseAdmin
+        .from('user_details')
+        .select('id, id_structure')
+        .eq('id_auth_user', currentAuthUserId)
+        .maybeSingle()
+
+    if (error) {
+        return {
+            data: null,
+            error: {
+                status: 400,
+                message: error.message
+            }
+        }
+    }
+
+    if (!data?.id_structure) {
+        return {
+            data: null,
+            error: {
+                status: 400,
+                message: 'Current user has no structure'
+            }
+        }
+    }
+
+    return {
+        data,
+        error: null
+    }
+}
+
 const getPrograms = async (req, res) => {
     try {
+        const { data: currentUserDetails, error: currentUserError } =
+            await getCurrentUserDetails(req)
+
+        if (currentUserError) {
+            return res
+                .status(currentUserError.status)
+                .json({ error: currentUserError.message })
+        }
+
+        const id_structure = currentUserDetails.id_structure
+
         const { data: programsData, error: programsError } = await supabaseAdmin
             .from('programs')
             .select('*')
+            .eq('id_structure', id_structure)
 
         if (programsError) {
             return res.status(400).json({ error: programsError.message })
         }
 
-        if (!programsData || programsData.length === 0) {
-            return res.status(200).json([])
-        }
+        const programsList = programsData ?? []
+        const programIds = unique(programsList.map((program) => program.id))
 
-        // Extract unique IDs for related data
-        const programIds = unique(programsData.map((program) => program.id))
-
-        const structureIds = unique(
-            programsData.map((program) => program.id_structure)
-        )
-
-        const tagParamStructureIds = unique(
-            programsData.map((program) => program.id_param_structure)
-        )
-
-        const statusIds = unique(programsData.map((program) => program.id_status))
-
-        // Fetch related data in batches
-        let structuresData = []
-        let statusesData = []
-        let allStatusesData = []
-        let tagParamStructuresData = []
-        let allTagParamStructuresData = []
+        let structureData = null
+        let statusOptions = []
+        let tagParamStructures = []
         let programContributorsData = []
         let programProjectsData = []
         let projectsData = []
         let contributorsData = []
         let contributorUserDetailsData = []
 
-        // Fetch structures
-        if (structureIds.length > 0) {
-            const { data, error } = await supabaseAdmin
+        const { data: currentStructureData, error: structureError } =
+            await supabaseAdmin
                 .from('structures')
                 .select('*')
-                .in('id', structureIds)
+                .eq('id', id_structure)
+                .maybeSingle()
 
-            if (error) {
-                return res.status(400).json({ error: error.message })
-            }
-
-            structuresData = data ?? []
+        if (structureError) {
+            return res.status(400).json({ error: structureError.message })
         }
 
-        // Fetch statuses
-        if (statusIds.length > 0) {
-            const { data, error } = await supabaseAdmin
-                .schema(OPTIONS_SCHEMA)
-                .from('os_status')
-                .select('*')
-                .in('id', statusIds)
+        structureData = currentStructureData ?? null
 
-            if (error) {
-                return res.status(400).json({ error: error.message })
-            }
+        const { data: statusesData, error: statusesError } = await supabaseAdmin
+            .schema(OPTIONS_SCHEMA)
+            .from('os_status')
+            .select('*')
 
-            statusesData = data ?? []
+        if (statusesError) {
+            return res.status(400).json({ error: statusesError.message })
         }
 
-        // Fetch all status
-        {
-            const { data, error } = await supabaseAdmin
-                .schema(OPTIONS_SCHEMA)
-                .from('os_status')
-                .select('*')
+        statusOptions = statusesData ?? []
 
-            if (error) {
-                return res.status(400).json({ error: error.message })
-            }
-
-            allStatusesData = data ?? []
-        }
-
-        // Fetch tag_param_structures used by programs
-        if (tagParamStructureIds.length > 0) {
-            const { data, error } = await supabaseAdmin
-                .from('tag_param_structure')
-                .select('*')
-                .in('id', tagParamStructureIds)
-
-            if (error) {
-                return res.status(400).json({ error: error.message })
-            }
-
-            tagParamStructuresData = data ?? []
-        }
-
-        // Fetch all tag_param_structure
-        {
-            const { data, error } = await supabaseAdmin
+        const { data: tagParamStructuresData, error: tagParamStructuresError } =
+            await supabaseAdmin
                 .from('tag_param_structure')
                 .select('*')
 
+        if (tagParamStructuresError) {
+            return res.status(400).json({ error: tagParamStructuresError.message })
+        }
+
+        tagParamStructures = tagParamStructuresData ?? []
+
+        const { data: projects, error: projectsError } = await supabaseAdmin
+            .from('projects')
+            .select('*')
+            .eq('id_structure', id_structure)
+
+        if (projectsError) {
+            return res.status(400).json({ error: projectsError.message })
+        }
+
+        projectsData = projects ?? []
+
+        const { data: contributors, error: contributorsError } = await supabaseAdmin
+            .from('contributors')
+            .select('*, contributor_details:id_contributor_details (*)')
+            .eq('id_structure', id_structure)
+
+        if (contributorsError) {
+            return res.status(400).json({ error: contributorsError.message })
+        }
+
+        contributorsData = contributors ?? []
+
+        const contributorAuthUserIds = unique(
+            contributorsData.map((contributor) => contributor.id_user)
+        )
+
+        if (contributorAuthUserIds.length > 0) {
+            const { data, error } = await supabaseAdmin
+                .from('user_details')
+                .select('*')
+                .in('id_auth_user', contributorAuthUserIds)
+
             if (error) {
                 return res.status(400).json({ error: error.message })
             }
 
-            allTagParamStructuresData = data ?? []
+            contributorUserDetailsData = data ?? []
         }
 
-        // Fetch program_contributors
         if (programIds.length > 0) {
             const { data, error } = await supabaseAdmin
                 .schema(RELATIONAL_SCHEMA)
@@ -130,7 +172,6 @@ const getPrograms = async (req, res) => {
             programContributorsData = data ?? []
         }
 
-        // Fetch program_projects
         if (programIds.length > 0) {
             const { data, error } = await supabaseAdmin
                 .schema(RELATIONAL_SCHEMA)
@@ -145,58 +186,7 @@ const getPrograms = async (req, res) => {
             programProjectsData = data ?? []
         }
 
-        // Fetch contributors used by program_contributors
-        if (programContributorsData.length > 0) {
-            const contributorIds = unique(
-                programContributorsData.map((link) => link.id_contributor)
-            )
-
-            if (contributorIds.length > 0) {
-                const { data, error } = await supabaseAdmin
-                    .from('contributors')
-                    .select('*, contributor_details:id_contributor_details (*)')
-                    .in('id', contributorIds)
-
-                if (error) {
-                    return res.status(400).json({ error: error.message })
-                }
-
-                contributorsData = data ?? []
-
-                const contributorAuthUserIds = unique(
-                    contributorsData.map((contributor) => contributor.id_user)
-                )
-
-                if (contributorAuthUserIds.length > 0) {
-                    const { data: userDetailsData, error: userDetailsError } =
-                        await supabaseAdmin
-                            .from('user_details')
-                            .select('*')
-                            .in('id_auth_user', contributorAuthUserIds)
-
-                    if (userDetailsError) {
-                        return res.status(400).json({ error: userDetailsError.message })
-                    }
-
-                    contributorUserDetailsData = userDetailsData ?? []
-                }
-            }
-        }
-
-        // Fetch projects
-        if (programIds.length > 0) {
-            const { data, error } = await supabaseAdmin
-                .from('projects')
-                .select('*')
-
-            if (error) {
-                return res.status(400).json({ error: error.message })
-            }
-
-            projectsData = data ?? []
-        }
-
-        const contributors = contributorsData.map((contributor) => {
+        const contributorsWithDetails = contributorsData.map((contributor) => {
             const userDetails = contributorUserDetailsData.find(
                 (details) => details.id_auth_user === contributor.id_user
             )
@@ -208,7 +198,11 @@ const getPrograms = async (req, res) => {
         })
 
         const contributorById = new Map(
-            contributors.map((contributor) => [contributor.id, contributor])
+            contributorsWithDetails.map((contributor) => [contributor.id, contributor])
+        )
+
+        const projectById = new Map(
+            projectsData.map((project) => [project.id, project])
         )
 
         const programContributorsEnriched = programContributorsData.map((link) => {
@@ -221,44 +215,51 @@ const getPrograms = async (req, res) => {
             }
         })
 
-        // Combine data into final program objects
-        const programs = programsData.map((program) => {
-            const structure = structuresData.find(
-                (item) => item.id === program.id_structure
-            )
-            const status = statusesData.find(
+        const programProjectsEnriched = programProjectsData.map((link) => {
+            const project = projectById.get(link.id_project) ?? null
+
+            return {
+                ...link,
+                project,
+                projects: project
+            }
+        })
+
+        const programs = programsList.map((program) => {
+            const status = statusOptions.find(
                 (item) => item.id === program.id_status
             )
-            const tag_param_structure = tagParamStructuresData.find(
+
+            const tagParamStructure = tagParamStructures.find(
                 (item) => item.id === program.id_param_structure
             )
+
             const programContributors = programContributorsEnriched.filter(
                 (link) => link.id_program === program.id
             )
-            const programProjects = programProjectsData.filter(
+
+            const programProjects = programProjectsEnriched.filter(
                 (link) => link.id_program === program.id
             )
 
             return {
                 ...program,
-                structure: structure ?? null,
+                structure: structureData,
                 status: status ?? null,
-                tag_param_structure: tag_param_structure ?? null,
+                tag_param_structure: tagParamStructure ?? null,
                 program_contributors: programContributors,
                 program_projects: programProjects
             }
         })
 
-        const statusOptions = unique(programs.map((program) => program.status))
-
         return res.status(200).json({
             programs,
-            programProjects: programProjectsData,
+            programProjects: programProjectsEnriched,
             programContributors: programContributorsEnriched,
             projects: projectsData,
-            contributors,
-            statusOptions: allStatusesData,
-            tagParamStructures: allTagParamStructuresData
+            contributors: contributorsWithDetails,
+            statusOptions,
+            tagParamStructures
         })
     } catch (e) {
         console.error(e)
@@ -268,7 +269,19 @@ const getPrograms = async (req, res) => {
 
 const getProgramsStatusCounts = async (req, res) => {
     try {
+        const { data: currentUserDetails, error: currentUserError } =
+            await getCurrentUserDetails(req)
+
+        if (currentUserError) {
+            return res
+                .status(currentUserError.status)
+                .json({ error: currentUserError.message })
+        }
+
+        const id_structure = currentUserDetails.id_structure
+
         const rawIds = req.query.statusIds || req.query.statusId || ''
+
         const statusIds = rawIds
             .split(',')
             .map((value) => value.trim())
@@ -281,6 +294,7 @@ const getProgramsStatusCounts = async (req, res) => {
         const { data, error } = await supabaseAdmin
             .from('programs')
             .select('id_status')
+            .eq('id_structure', id_structure)
             .in('id_status', statusIds)
 
         if (error) {
@@ -297,7 +311,7 @@ const getProgramsStatusCounts = async (req, res) => {
                     counts[row.id_status] += 1
                 }
             })
-            
+
         if (statusIds.length === 1) {
             return res.status(200).json({ count: counts[statusIds[0]] || 0 })
         }
@@ -311,7 +325,24 @@ const getProgramsStatusCounts = async (req, res) => {
 
 const createProgram = async (req, res) => {
     try {
-        const { id_param_structure, description, date_start, date_end, id_status } = req.body
+        const { data: currentUserDetails, error: currentUserError } =
+            await getCurrentUserDetails(req)
+
+        if (currentUserError) {
+            return res
+                .status(currentUserError.status)
+                .json({ error: currentUserError.message })
+        }
+
+        const id_structure = currentUserDetails.id_structure
+
+        const {
+            id_param_structure,
+            description,
+            date_start,
+            date_end,
+            id_status
+        } = req.body
 
         if (!id_param_structure || !description || !date_start || !date_end || !id_status) {
             return res.status(400).json({ error: 'Missing required fields' })
@@ -319,7 +350,14 @@ const createProgram = async (req, res) => {
 
         const { data, error } = await supabaseAdmin
             .from('programs')
-            .insert([{ id_param_structure, description, date_start, date_end, id_status }])
+            .insert({
+                id_structure,
+                id_param_structure,
+                description,
+                date_start,
+                date_end,
+                id_status
+            })
             .select('*')
             .single()
 
@@ -336,7 +374,24 @@ const createProgram = async (req, res) => {
 
 const updateProgram = async (req, res) => {
     try {
-        const { id_param_structure, description, date_start, date_end, id_status } = req.body
+        const { data: currentUserDetails, error: currentUserError } =
+            await getCurrentUserDetails(req)
+
+        if (currentUserError) {
+            return res
+                .status(currentUserError.status)
+                .json({ error: currentUserError.message })
+        }
+
+        const id_structure = currentUserDetails.id_structure
+
+        const {
+            id_param_structure,
+            description,
+            date_start,
+            date_end,
+            id_status
+        } = req.body
 
         if (!id_param_structure || !description || !date_start || !date_end || !id_status) {
             return res.status(400).json({ error: 'Missing required fields' })
@@ -344,16 +399,27 @@ const updateProgram = async (req, res) => {
 
         const { data, error } = await supabaseAdmin
             .from('programs')
-            .update({ id_param_structure, description, date_start, date_end, id_status })
+            .update({
+                id_param_structure,
+                description,
+                date_start,
+                date_end,
+                id_status
+            })
             .eq('id', req.params.id)
+            .eq('id_structure', id_structure)
             .select('*')
-            .single()
+            .maybeSingle()
 
         if (error) {
             return res.status(400).json({ error: error.message })
         }
 
-        return res.status(201).json(data)
+        if (!data) {
+            return res.status(404).json({ error: 'Program not found in current structure' })
+        }
+
+        return res.status(200).json(data)
     } catch (e) {
         console.error(e)
         return res.status(500).json({ error: 'Server error' })
