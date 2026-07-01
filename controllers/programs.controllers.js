@@ -53,219 +53,216 @@ const getCurrentUserDetails = async (req) => {
 const getPrograms = async (req, res) => {
     try {
         const { data: currentUserDetails, error: currentUserError } =
-            await getCurrentUserDetails(req)
+            await getCurrentUserDetails(req);
 
         if (currentUserError) {
-            return res
-                .status(currentUserError.status)
-                .json({ error: currentUserError.message })
+            return res.status(401).json({ error: currentUserError.message });
         }
 
-        const id_structure = currentUserDetails.id_structure
+        const id_structure = currentUserDetails.id_structure;
 
         const { data: programsData, error: programsError } = await supabaseAdmin
-            .from('programs')
-            .select('*')
-            .eq('id_structure', id_structure)
+            .from("programs")
+            .select("*")
+            .eq("id_structure", id_structure);
 
         if (programsError) {
-            return res.status(400).json({ error: programsError.message })
+            return res.status(400).json({ error: programsError.message });
         }
 
-        const programsList = programsData ?? []
-        const programIds = unique(programsList.map((program) => program.id))
+        const programsList = programsData ?? [];
+        const programIds = unique(programsList.map((program) => program.id));
 
-        let structureData = null
-        let statusOptions = []
-        let tagParamStructures = []
-        let programContributorsData = []
-        let programProjectsData = []
-        let projectsData = []
-        let contributorsData = []
-        let contributorUserDetailsData = []
-
-        const { data: currentStructureData, error: structureError } =
-            await supabaseAdmin
-                .from('structures')
-                .select('*')
-                .eq('id', id_structure)
-                .maybeSingle()
+        const { data: structureData, error: structureError } = await supabaseAdmin
+            .from("structures")
+            .select("*")
+            .eq("id", id_structure)
+            .maybeSingle();
 
         if (structureError) {
-            return res.status(400).json({ error: structureError.message })
+            return res.status(400).json({ error: structureError.message });
         }
 
-        structureData = currentStructureData ?? null
-
-        const { data: statusesData, error: statusesError } = await supabaseAdmin
+        const { data: statusOptionsData, error: statusesError } = await supabaseAdmin
             .schema(OPTIONS_SCHEMA)
-            .from('os_status')
-            .select('*')
+            .from("os_status")
+            .select("*");
 
         if (statusesError) {
-            return res.status(400).json({ error: statusesError.message })
+            return res.status(400).json({ error: statusesError.message });
         }
 
-        statusOptions = statusesData ?? []
+        const statusOptions = statusOptionsData ?? [];
 
         const { data: tagParamStructuresData, error: tagParamStructuresError } =
             await supabaseAdmin
-                .from('tag_param_structure')
-                .select('*')
+                .from("tag_param_structure")
+                .select("*");
 
         if (tagParamStructuresError) {
-            return res.status(400).json({ error: tagParamStructuresError.message })
+            return res.status(400).json({ error: tagParamStructuresError.message });
         }
 
-        tagParamStructures = tagParamStructuresData ?? []
+        const tagParamStructures = tagParamStructuresData ?? [];
 
-        const { data: projects, error: projectsError } = await supabaseAdmin
-            .from('projects')
-            .select('*')
-            .eq('id_structure', id_structure)
+        const { data: projectsData, error: projectsError } = await supabaseAdmin
+            .from("projects")
+            .select("*")
+            .eq("id_structure", id_structure);
 
         if (projectsError) {
-            return res.status(400).json({ error: projectsError.message })
+            return res.status(400).json({ error: projectsError.message });
         }
 
-        projectsData = projects ?? []
+        const projects = projectsData ?? [];
 
-        const { data: contributors, error: contributorsError } = await supabaseAdmin
-            .from('contributors')
-            .select('*, contributor_details:id_contributor_details (*)')
-            .eq('id_structure', id_structure)
+
+        const { data: contributorsData, error: contributorsError } =
+            await supabaseAdmin
+                .from("contributors")
+                .select("*, contributor_details:id_contributor_details (*)")
+                .eq("id_structure", id_structure);
 
         if (contributorsError) {
-            return res.status(400).json({ error: contributorsError.message })
+            return res.status(400).json({ error: contributorsError.message });
         }
 
-        contributorsData = contributors ?? []
-
+        const contributors = contributorsData ?? [];
         const contributorAuthUserIds = unique(
-            contributorsData.map((contributor) => contributor.id_user)
-        )
+            contributors
+                .map((contributor) => contributor.id_user)
+                .filter(Boolean)
+        );
+
+        let contributorUserDetailsData = [];
 
         if (contributorAuthUserIds.length > 0) {
             const { data, error } = await supabaseAdmin
-                .from('user_details')
-                .select('*')
-                .in('id_auth_user', contributorAuthUserIds)
+                .from("user_details")
+                .select("*")
+                .in("id_auth_user", contributorAuthUserIds);
 
             if (error) {
-                return res.status(400).json({ error: error.message })
+                return res.status(400).json({ error: error.message });
             }
 
-            contributorUserDetailsData = data ?? []
+            contributorUserDetailsData = data ?? [];
         }
+
+        let programContributorsData = [];
 
         if (programIds.length > 0) {
             const { data, error } = await supabaseAdmin
                 .schema(RELATIONAL_SCHEMA)
-                .from('program_contributors')
-                .select('*')
-                .in('id_program', programIds)
+                .from("program_contributors")
+                .select("*")
+                .in("id_program", programIds);
 
             if (error) {
-                return res.status(400).json({ error: error.message })
+                return res.status(400).json({ error: error.message });
             }
 
-            programContributorsData = data ?? []
+            programContributorsData = data ?? [];
         }
+
+        let programProjectsData = [];
 
         if (programIds.length > 0) {
             const { data, error } = await supabaseAdmin
                 .schema(RELATIONAL_SCHEMA)
-                .from('program_projects')
-                .select('*')
-                .in('id_program', programIds)
+                .from("program_projects")
+                .select("*")
+                .in("id_program", programIds);
 
             if (error) {
-                return res.status(400).json({ error: error.message })
+                return res.status(400).json({ error: error.message });
             }
 
-            programProjectsData = data ?? []
+            programProjectsData = data ?? [];
         }
 
-        const contributorsWithDetails = contributorsData.map((contributor) => {
+        const contributorsWithDetails = contributors.map((contributor) => {
             const userDetails = contributorUserDetailsData.find(
                 (details) => details.id_auth_user === contributor.id_user
-            )
+            );
 
             return {
                 ...contributor,
-                user_details: userDetails ?? null
-            }
-        })
+                user_details: userDetails ?? null,
+            };
+        });
+
+        const statusById = new Map(
+            statusOptions.map((status) => [status.id, status])
+        );
+
+        const tagParamStructureById = new Map(
+            tagParamStructures.map((tag) => [tag.id, tag])
+        );
 
         const contributorById = new Map(
-            contributorsWithDetails.map((contributor) => [contributor.id, contributor])
-        )
+            contributorsWithDetails.map((contributor) => [
+                contributor.id,
+                contributor,
+            ])
+        );
 
         const projectById = new Map(
-            projectsData.map((project) => [project.id, project])
-        )
+            projects.map((project) => [project.id, project])
+        );
 
-        const programContributorsEnriched = programContributorsData.map((link) => {
-            const contributor = contributorById.get(link.id_contributor) ?? null
+        const programContributors = programContributorsData.map((link) => {
+            const contributor = contributorById.get(link.id_contributor) ?? null;
 
             return {
                 ...link,
                 contributor,
-                contributors: contributor
-            }
-        })
+                contributors: contributor,
+            };
+        });
 
-        const programProjectsEnriched = programProjectsData.map((link) => {
-            const project = projectById.get(link.id_project) ?? null
+        const programProjects = programProjectsData.map((link) => {
+            const project = projectById.get(link.id_project) ?? null;
 
             return {
                 ...link,
                 project,
-                projects: project
-            }
-        })
+                projects: project,
+            };
+        });
 
         const programs = programsList.map((program) => {
-            const status = statusOptions.find(
-                (item) => item.id === program.id_status
-            )
-
-            const tagParamStructure = tagParamStructures.find(
-                (item) => item.id === program.id_param_structure
-            )
-
-            const programContributors = programContributorsEnriched.filter(
-                (link) => link.id_program === program.id
-            )
-
-            const programProjects = programProjectsEnriched.filter(
-                (link) => link.id_program === program.id
-            )
+            const programId = program.id;
 
             return {
                 ...program,
-                structure: structureData,
-                status: status ?? null,
-                tag_param_structure: tagParamStructure ?? null,
-                program_contributors: programContributors,
-                program_projects: programProjects
-            }
-        })
+                structure: structureData ?? null,
+                status: statusById.get(program.id_status) ?? null,
+                tag_param_structure:
+                    tagParamStructureById.get(program.id_param_structure) ?? null,
+                program_contributors: programContributors.filter(
+                    (link) => link.id_program === programId
+                ),
+                program_projects: programProjects.filter(
+                    (link) => link.id_program === programId
+                ),
+            };
+        });
 
         return res.status(200).json({
             programs,
-            programProjects: programProjectsEnriched,
-            programContributors: programContributorsEnriched,
-            projects: projectsData,
+            programProjects,
+            programContributors,
+            projects,
             contributors: contributorsWithDetails,
             statusOptions,
-            tagParamStructures
-        })
+            tagParamStructures,
+        });
     } catch (e) {
-        console.error(e)
-        return res.status(500).json({ error: 'Server error' })
+        console.error(e);
+        return res.status(500).json({ error: "Server error" });
     }
-}
+};
 
 const getProgramsStatusCounts = async (req, res) => {
     try {
