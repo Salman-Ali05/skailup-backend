@@ -42,7 +42,7 @@ const getActivities = async (req, res) => {
         }
 
         /**
-         * Nouvelle base :
+         * Base de récupération :
          * relational.program_activities
          */
         const { data: programActivitiesData, error: programActivitiesError } =
@@ -57,6 +57,7 @@ const getActivities = async (req, res) => {
         }
 
         const programActivities = programActivitiesData ?? [];
+
         const activityIds = unique(
             programActivities.map((link) => link.id_activity)
         );
@@ -158,6 +159,48 @@ const getActivities = async (req, res) => {
             projects = data ?? [];
         }
 
+        /**
+         * Users liés aux projects :
+         * public.projects.id_user -> public.user_details.id_auth_user
+         */
+        const projectAuthUserIds = unique(
+            projects.map((project) => project.id_user)
+        );
+
+        let projectUsersData = [];
+
+        if (projectAuthUserIds.length > 0) {
+            const { data, error } = await supabaseAdmin
+                .from("user_details")
+                .select("*")
+                .in("id_auth_user", projectAuthUserIds);
+
+            if (error) {
+                return res.status(400).json({ error: error.message });
+            }
+
+            projectUsersData = data ?? [];
+        }
+
+        const projectUserDetailsByAuthId = new Map(
+            projectUsersData.map((userDetails) => [
+                String(userDetails.id_auth_user),
+                userDetails,
+            ])
+        );
+
+        const projectsWithUsers = projects.map((project) => {
+            const userDetails = project.id_user
+                ? projectUserDetailsByAuthId.get(String(project.id_user)) ?? null
+                : null;
+
+            return {
+                ...project,
+                user_details: userDetails,
+                user: userDetails,
+            };
+        });
+
         if (contributorIds.length > 0) {
             const { data, error } = await supabaseAdmin
                 .from("contributors")
@@ -207,7 +250,7 @@ const getActivities = async (req, res) => {
 
         const contributorsWithDetails = contributors.map((contributor) => {
             const userDetails = contributorUserDetailsData.find((details) => {
-                return details.id_auth_user === contributor.id_user;
+                return String(details.id_auth_user) === String(contributor.id_user);
             });
 
             return {
@@ -280,7 +323,7 @@ const getActivities = async (req, res) => {
         );
 
         const projectById = new Map(
-            projects.map((project) => [String(project.id), project])
+            projectsWithUsers.map((project) => [String(project.id), project])
         );
 
         const contributorById = new Map(
@@ -384,7 +427,9 @@ const getActivities = async (req, res) => {
             activityContribs,
             activityHourlyRates,
 
-            projects,
+            projects: projectsWithUsers,
+            projectUsers: projectUsersData,
+
             contributors: contributorsWithDetails,
             hourlyRates,
 
@@ -728,7 +773,94 @@ const createActivity = async (req, res) => {
     }
 };
 
+const updateActivity = async (req, res) => {
+    try {
+        const { activityId } = req.params;
+
+        if (!activityId) {
+            return res.status(400).json({ error: "activityId is required" });
+        }
+
+        const { data: currentUserDetails, error: currentUserError } =
+            await getCurrentUserDetails(req);
+
+        if (currentUserError) {
+            return res
+                .status(currentUserError.status || 401)
+                .json({ error: currentUserError.message });
+        }
+
+        const id_structure = currentUserDetails.id_structure;
+
+        const {
+            id_debriefing,
+            description,
+            duration_in_minutes,
+            duration_realized,
+            incremental_session,
+            is_finished,
+            is_note_needed,
+            is_planable,
+            is_priced,
+            is_sign_needed,
+            name,
+            number_session,
+            id_param_name,
+            id_status,
+        } = req.body;
+
+        if (!name || !id_param_name || !id_status) {
+            return res.status(400).json({ error: "Missing required fields" });
+        }
+
+        const activityPayload = {
+            id_debriefing: id_debriefing || null,
+            description: description || null,
+            duration_in_minutes: duration_in_minutes ?? null,
+            duration_realized: duration_realized ?? null,
+            incremental_session: incremental_session ?? null,
+            is_finished: is_finished ?? false,
+            is_note_needed: is_note_needed ?? false,
+            is_planable: is_planable ?? false,
+            is_priced: is_priced ?? false,
+            is_sign_needed: is_sign_needed ?? false,
+            name,
+            number_session: number_session ?? null,
+            id_param_name,
+            id_status,
+        };
+
+        const { data, error } = await supabaseAdmin
+            .from("activities")
+            .update(activityPayload)
+            .eq("id", activityId)
+            .eq("id_structure", id_structure)
+            .select("*")
+            .maybeSingle();
+
+        if (error) {
+            return res.status(400).json({ error: error.message });
+        }
+
+        if (!data) {
+            return res.status(404).json({
+                error: "Activity not found in current structure",
+            });
+        }
+
+        return res.status(200).json({
+            activity: data,
+        });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({
+            error: e.message || "Server error",
+        });
+    }
+};
+
 module.exports = {
     getActivities,
     createActivity,
+    updateActivity,
 };

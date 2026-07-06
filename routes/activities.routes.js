@@ -7,4 +7,5 @@ router.use(authenticated)
 
 router.get("/:programId", activitiesController.getActivities);
 router.post("/:programId", activitiesController.createActivity);
+router.put("/:programId/:activityId", activitiesController.updateActivity);
 module.exports = router
