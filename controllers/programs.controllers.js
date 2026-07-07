@@ -423,9 +423,310 @@ const updateProgram = async (req, res) => {
     }
 }
 
+const getProgramProjects = async (req, res) => {
+    try {
+        const { id: programId } = req.params;
+
+        if (!programId) {
+            return res.status(400).json({
+                error: "programId is required",
+            });
+        }
+
+        const { data: currentUserDetails, error: currentUserError } =
+            await getCurrentUserDetails(req);
+
+        if (currentUserError) {
+            return res
+                .status(currentUserError.status || 401)
+                .json({ error: currentUserError.message });
+        }
+
+        const id_structure = currentUserDetails.id_structure;
+
+        /*
+         * Vérification que le programme appartient bien
+         * à la structure de l'utilisateur.
+         */
+        const { data: programData, error: programError } = await supabaseAdmin
+            .from("programs")
+            .select("*")
+            .eq("id", programId)
+            .eq("id_structure", id_structure)
+            .maybeSingle();
+
+        if (programError) {
+            return res.status(400).json({
+                error: programError.message,
+            });
+        }
+
+        if (!programData) {
+            return res.status(404).json({
+                error: "Program not found in current structure",
+            });
+        }
+
+        /*
+         * Tous les projets de la structure.
+         */
+        const { data: projectsData, error: projectsError } = await supabaseAdmin
+            .from("projects")
+            .select("*")
+            .eq("id_structure", id_structure);
+
+        if (projectsError) {
+            return res.status(400).json({
+                error: projectsError.message,
+            });
+        }
+
+        const projects = projectsData ?? [];
+
+        /*
+         * Relations déjà présentes pour ce programme.
+         */
+        const {
+            data: programProjectLinksData,
+            error: programProjectLinksError,
+        } = await supabaseAdmin
+            .schema(RELATIONAL_SCHEMA)
+            .from("program_projects")
+            .select("*")
+            .eq("id_program", programId);
+
+        if (programProjectLinksError) {
+            return res.status(400).json({
+                error: programProjectLinksError.message,
+            });
+        }
+
+        const programProjectLinks = programProjectLinksData ?? [];
+
+        /*
+         * Récupération des utilisateurs rattachés aux projets.
+         */
+        const projectAuthUserIds = unique(
+            projects.map((project) => project.id_user)
+        );
+
+        let projectUsersData = [];
+
+        if (projectAuthUserIds.length > 0) {
+            const { data, error } = await supabaseAdmin
+                .from("user_details")
+                .select("*")
+                .in("id_auth_user", projectAuthUserIds);
+
+            if (error) {
+                return res.status(400).json({
+                    error: error.message,
+                });
+            }
+
+            projectUsersData = data ?? [];
+        }
+
+        const projectUserByAuthId = new Map(
+            projectUsersData.map((userDetails) => [
+                String(userDetails.id_auth_user),
+                userDetails,
+            ])
+        );
+
+        const projectsWithUsers = projects.map((project) => {
+            const userDetails = project.id_user
+                ? projectUserByAuthId.get(String(project.id_user)) ?? null
+                : null;
+
+            return {
+                ...project,
+                user: userDetails,
+                user_details: userDetails,
+            };
+        });
+
+        const assignedProjectIds = new Set(
+            programProjectLinks.map((link) => String(link.id_project))
+        );
+
+        const programProjects = projectsWithUsers.filter((project) => {
+            return assignedProjectIds.has(String(project.id));
+        });
+
+        const availableProjects = projectsWithUsers.filter((project) => {
+            return !assignedProjectIds.has(String(project.id));
+        });
+
+        return res.status(200).json({
+            program: programData,
+            programProjectLinks,
+            programProjects,
+            availableProjects,
+        });
+    } catch (e) {
+        console.error(e);
+
+        return res.status(500).json({
+            error: e.message || "Server error",
+        });
+    }
+};
+
+const addProjectToProgram = async (req, res) => {
+    try {
+        const { id: programId } = req.params;
+        const { projectIds = [] } = req.body;
+
+        if (!programId) {
+            return res.status(400).json({
+                error: "programId is required",
+            });
+        }
+
+        if (!Array.isArray(projectIds)) {
+            return res.status(400).json({
+                error: "projectIds must be an array",
+            });
+        }
+
+        const uniqueProjectIds = unique(projectIds);
+
+        if (uniqueProjectIds.length === 0) {
+            return res.status(400).json({
+                error: "At least one project is required",
+            });
+        }
+
+        const { data: currentUserDetails, error: currentUserError } =
+            await getCurrentUserDetails(req);
+
+        if (currentUserError) {
+            return res
+                .status(currentUserError.status || 401)
+                .json({ error: currentUserError.message });
+        }
+
+        const id_structure = currentUserDetails.id_structure;
+
+        /*
+         * Vérification du programme.
+         */
+        const { data: programData, error: programError } = await supabaseAdmin
+            .from("programs")
+            .select("id")
+            .eq("id", programId)
+            .eq("id_structure", id_structure)
+            .maybeSingle();
+
+        if (programError) {
+            return res.status(400).json({
+                error: programError.message,
+            });
+        }
+
+        if (!programData) {
+            return res.status(404).json({
+                error: "Program not found in current structure",
+            });
+        }
+
+        /*
+         * Vérification des projets.
+         */
+        const { data: validProjectsData, error: validProjectsError } =
+            await supabaseAdmin
+                .from("projects")
+                .select("id")
+                .eq("id_structure", id_structure)
+                .in("id", uniqueProjectIds);
+
+        if (validProjectsError) {
+            return res.status(400).json({
+                error: validProjectsError.message,
+            });
+        }
+
+        const validProjects = validProjectsData ?? [];
+
+        if (validProjects.length !== uniqueProjectIds.length) {
+            return res.status(400).json({
+                error: "One or more projects are invalid for this structure",
+            });
+        }
+
+        /*
+         * Relations déjà présentes.
+         */
+        const {
+            data: existingLinksData,
+            error: existingLinksError,
+        } = await supabaseAdmin
+            .schema(RELATIONAL_SCHEMA)
+            .from("program_projects")
+            .select("id_project")
+            .eq("id_program", programId)
+            .in("id_project", uniqueProjectIds);
+
+        if (existingLinksError) {
+            return res.status(400).json({
+                error: existingLinksError.message,
+            });
+        }
+
+        const existingProjectIds = new Set(
+            (existingLinksData ?? []).map((link) =>
+                String(link.id_project)
+            )
+        );
+
+        const missingProjectIds = uniqueProjectIds.filter((projectId) => {
+            return !existingProjectIds.has(String(projectId));
+        });
+
+        let addedProgramProjects = [];
+
+        if (missingProjectIds.length > 0) {
+            const rows = missingProjectIds.map((id_project) => ({
+                id_program: programId,
+                id_project,
+            }));
+
+            const { data, error } = await supabaseAdmin
+                .schema(RELATIONAL_SCHEMA)
+                .from("program_projects")
+                .insert(rows)
+                .select("*");
+
+            if (error) {
+                return res.status(400).json({
+                    error: error.message,
+                });
+            }
+
+            addedProgramProjects = data ?? [];
+        }
+
+        return res.status(201).json({
+            addedProgramProjects,
+            alreadyAssignedProjectIds: uniqueProjectIds.filter((projectId) => {
+                return existingProjectIds.has(String(projectId));
+            }),
+        });
+    } catch (e) {
+        console.error(e);
+
+        return res.status(500).json({
+            error: e.message || "Server error",
+        });
+    }
+};
+
 module.exports = {
     getPrograms,
     getProgramsStatusCounts,
+    getProgramProjects,
+    addProjectToProgram,
     createProgram,
-    updateProgram
-}
+    updateProgram,
+};

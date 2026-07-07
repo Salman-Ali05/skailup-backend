@@ -452,7 +452,9 @@ const createActivity = async (req, res) => {
         const { programId } = req.params;
 
         if (!programId) {
-            return res.status(400).json({ error: "programId is required" });
+            return res.status(400).json({
+                error: "programId is required",
+            });
         }
 
         const { data: currentUserDetails, error: currentUserError } =
@@ -488,23 +490,33 @@ const createActivity = async (req, res) => {
         } = req.body;
 
         if (!name) {
-            return res.status(400).json({ error: "name is required" });
+            return res.status(400).json({
+                error: "name is required",
+            });
         }
 
         if (!id_param_name) {
-            return res.status(400).json({ error: "id_param_name is required" });
+            return res.status(400).json({
+                error: "id_param_name is required",
+            });
         }
 
         if (!id_status) {
-            return res.status(400).json({ error: "id_status is required" });
+            return res.status(400).json({
+                error: "id_status is required",
+            });
         }
 
         if (!Array.isArray(projects)) {
-            return res.status(400).json({ error: "projects must be an array" });
+            return res.status(400).json({
+                error: "projects must be an array",
+            });
         }
 
         if (!Array.isArray(contribs)) {
-            return res.status(400).json({ error: "contribs must be an array" });
+            return res.status(400).json({
+                error: "contribs must be an array",
+            });
         }
 
         if (contribs.length > 0 && !Array.isArray(rate_60minutes)) {
@@ -513,7 +525,10 @@ const createActivity = async (req, res) => {
             });
         }
 
-        if (contribs.length > 0 && rate_60minutes.length !== contribs.length) {
+        if (
+            contribs.length > 0 &&
+            rate_60minutes.length !== contribs.length
+        ) {
             return res.status(400).json({
                 error: "rate_60minutes must have the same length as contribs",
             });
@@ -528,30 +543,44 @@ const createActivity = async (req, res) => {
             });
         }
 
-        const { data: programData, error: programError } = await supabaseAdmin
-            .from("programs")
-            .select("*")
-            .eq("id", programId)
-            .eq("id_structure", id_structure)
-            .maybeSingle();
+        /*
+         * Vérification du programme.
+         */
+        const { data: programData, error: programError } =
+            await supabaseAdmin
+                .from("programs")
+                .select("*")
+                .eq("id", programId)
+                .eq("id_structure", id_structure)
+                .maybeSingle();
 
         if (programError) {
-            return res.status(400).json({ error: programError.message });
+            return res.status(400).json({
+                error: programError.message,
+            });
         }
 
         if (!programData) {
-            return res.status(404).json({ error: "Program not found" });
+            return res.status(404).json({
+                error: "Program not found",
+            });
         }
 
+        /*
+         * Vérification des projets.
+         */
         if (uniqueProjects.length > 0) {
-            const { data: validProjects, error: projectsError } = await supabaseAdmin
-                .from("projects")
-                .select("id")
-                .eq("id_structure", id_structure)
-                .in("id", uniqueProjects);
+            const { data: validProjects, error: projectsError } =
+                await supabaseAdmin
+                    .from("projects")
+                    .select("id")
+                    .eq("id_structure", id_structure)
+                    .in("id", uniqueProjects);
 
             if (projectsError) {
-                return res.status(400).json({ error: projectsError.message });
+                return res.status(400).json({
+                    error: projectsError.message,
+                });
             }
 
             if ((validProjects ?? []).length !== uniqueProjects.length) {
@@ -561,15 +590,21 @@ const createActivity = async (req, res) => {
             }
         }
 
+        /*
+         * Vérification des intervenants.
+         */
         if (uniqueContribs.length > 0) {
-            const { data: validContribs, error: contribsError } = await supabaseAdmin
-                .from("contributors")
-                .select("id")
-                .eq("id_structure", id_structure)
-                .in("id", uniqueContribs);
+            const { data: validContribs, error: contribsError } =
+                await supabaseAdmin
+                    .from("contributors")
+                    .select("id")
+                    .eq("id_structure", id_structure)
+                    .in("id", uniqueContribs);
 
             if (contribsError) {
-                return res.status(400).json({ error: contribsError.message });
+                return res.status(400).json({
+                    error: contribsError.message,
+                });
             }
 
             if ((validContribs ?? []).length !== uniqueContribs.length) {
@@ -579,6 +614,9 @@ const createActivity = async (req, res) => {
             }
         }
 
+        /*
+         * Création de l'activité.
+         */
         const activityPayload = {
             id_debriefing: id_debriefing || null,
             description: description || null,
@@ -599,14 +637,17 @@ const createActivity = async (req, res) => {
             id_structure,
         };
 
-        const { data: activityData, error: activityError } = await supabaseAdmin
-            .from("activities")
-            .insert(activityPayload)
-            .select("*")
-            .single();
+        const { data: activityData, error: activityError } =
+            await supabaseAdmin
+                .from("activities")
+                .insert(activityPayload)
+                .select("*")
+                .single();
 
         if (activityError) {
-            return res.status(400).json({ error: activityError.message });
+            return res.status(400).json({
+                error: activityError.message,
+            });
         }
 
         createdActivity = activityData;
@@ -618,10 +659,10 @@ const createActivity = async (req, res) => {
         let activityContribs = [];
         let hourlyRates = [];
         let activityHourlyRates = [];
+        let programProjectsAdded = [];
 
-        /**
-         * Nouvelle relation obligatoire :
-         * program -> activity
+        /*
+         * Relation programme -> activité.
          */
         const { data: programActivityData, error: programActivityError } =
             await supabaseAdmin
@@ -640,6 +681,9 @@ const createActivity = async (req, res) => {
 
         programActivity = programActivityData;
 
+        /*
+         * Relations activité -> projets.
+         */
         if (uniqueProjects.length > 0) {
             const projectRows = uniqueProjects.map((id_project) => ({
                 id_activity,
@@ -659,6 +703,9 @@ const createActivity = async (req, res) => {
             activityProjects = data ?? [];
         }
 
+        /*
+         * Relations activité -> intervenants.
+         */
         if (uniqueContribs.length > 0) {
             const contribRows = uniqueContribs.map((id_contrib) => ({
                 id_activity,
@@ -678,12 +725,18 @@ const createActivity = async (req, res) => {
             activityContribs = data ?? [];
         }
 
+        /*
+         * Tarifs horaires.
+         */
         if (uniqueContribs.length > 0) {
-            const hourlyRateRows = uniqueContribs.map((id_contrib, index) => ({
-                id_contrib,
-                id_structure,
-                rate_60minutes: Number(rate_60minutes[index]) || 0,
-            }));
+            const hourlyRateRows = uniqueContribs.map(
+                (id_contrib, index) => ({
+                    id_contrib,
+                    id_structure,
+                    rate_60minutes:
+                        Number(rate_60minutes[index]) || 0,
+                })
+            );
 
             const { data, error } = await supabaseAdmin
                 .from("hourly_rates")
@@ -695,26 +748,89 @@ const createActivity = async (req, res) => {
             }
 
             hourlyRates = data ?? [];
-            createdHourlyRateIds = hourlyRates.map((rate) => rate.id);
 
-            const activityHourlyRateRows = hourlyRates.map((hourlyRate) => ({
-                id_activity,
-                id_hourly_rate: hourlyRate.id,
-            }));
+            createdHourlyRateIds = hourlyRates.map(
+                (rate) => rate.id
+            );
+
+            const activityHourlyRateRows = hourlyRates.map(
+                (hourlyRate) => ({
+                    id_activity,
+                    id_hourly_rate: hourlyRate.id,
+                })
+            );
 
             if (activityHourlyRateRows.length > 0) {
-                const { data: relationData, error: relationError } =
-                    await supabaseAdmin
-                        .schema(RELATIONAL_SCHEMA)
-                        .from("activity_hourly_rates")
-                        .insert(activityHourlyRateRows)
-                        .select("*");
+                const {
+                    data: relationData,
+                    error: relationError,
+                } = await supabaseAdmin
+                    .schema(RELATIONAL_SCHEMA)
+                    .from("activity_hourly_rates")
+                    .insert(activityHourlyRateRows)
+                    .select("*");
 
                 if (relationError) {
                     throw relationError;
                 }
 
                 activityHourlyRates = relationData ?? [];
+            }
+        }
+
+        /*
+         * Ajout des projets au programme.
+         *
+         * On récupère les relations déjà présentes pour ce programme,
+         * puis on insère uniquement les projets manquants.
+         */
+        if (uniqueProjects.length > 0) {
+            const {
+                data: existingProgramProjectsData,
+                error: existingProgramProjectsError,
+            } = await supabaseAdmin
+                .schema(RELATIONAL_SCHEMA)
+                .from("program_projects")
+                .select("id_project")
+                .eq("id_program", programId)
+                .in("id_project", uniqueProjects);
+
+            if (existingProgramProjectsError) {
+                throw existingProgramProjectsError;
+            }
+
+            const existingProgramProjectIds = new Set(
+                (existingProgramProjectsData ?? []).map((link) =>
+                    String(link.id_project)
+                )
+            );
+
+            const missingProgramProjectIds = uniqueProjects.filter(
+                (id_project) => {
+                    return !existingProgramProjectIds.has(
+                        String(id_project)
+                    );
+                }
+            );
+
+            if (missingProgramProjectIds.length > 0) {
+                const programProjectRows =
+                    missingProgramProjectIds.map((id_project) => ({
+                        id_program: programId,
+                        id_project,
+                    }));
+
+                const { data, error } = await supabaseAdmin
+                    .schema(RELATIONAL_SCHEMA)
+                    .from("program_projects")
+                    .insert(programProjectRows)
+                    .select("*");
+
+                if (error) {
+                    throw error;
+                }
+
+                programProjectsAdded = data ?? [];
             }
         }
 
@@ -725,6 +841,7 @@ const createActivity = async (req, res) => {
             activityContribs,
             hourlyRates,
             activityHourlyRates,
+            programProjectsAdded,
         });
     } catch (e) {
         console.error(e);
