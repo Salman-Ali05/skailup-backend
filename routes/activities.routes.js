@@ -1,6 +1,6 @@
 const express = require('express')
 const router = express.Router()
-const activitiesController = require('../controllers/activities.controller')
+const activitiesController = require('../controllers/activities.controllers')
 const { authenticated } = require('../middlewares/authenticated.middleware')
 
 router.use(authenticated)

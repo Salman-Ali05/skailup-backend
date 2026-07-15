@@ -4,6 +4,7 @@ const OPTIONS_SCHEMA = "options_set";
 const RELATIONAL_SCHEMA = "relational";
 
 const { getCurrentUserDetails } = require("../helpers/getCurrentUserDetails");
+const { createSessionsForActivity } = require("./sessions.controllers");
 
 const unique = (arr) => [...new Set(arr.filter(Boolean))];
 
@@ -41,10 +42,6 @@ const getActivities = async (req, res) => {
             return res.status(404).json({ error: "Program not found" });
         }
 
-        /**
-         * Base de récupération :
-         * relational.program_activities
-         */
         const { data: programActivitiesData, error: programActivitiesError } =
             await supabaseAdmin
                 .schema(RELATIONAL_SCHEMA)
@@ -159,10 +156,6 @@ const getActivities = async (req, res) => {
             projects = data ?? [];
         }
 
-        /**
-         * Users liés aux projects :
-         * public.projects.id_user -> public.user_details.id_auth_user
-         */
         const projectAuthUserIds = unique(
             projects.map((project) => project.id_user)
         );
@@ -446,7 +439,10 @@ const getActivities = async (req, res) => {
 
 const createActivity = async (req, res) => {
     let createdActivity = null;
+
     let createdHourlyRateIds = [];
+    let createdSessionIds = [];
+    let createdProgramProjectIds = [];
 
     try {
         const { programId } = req.params;
@@ -457,16 +453,21 @@ const createActivity = async (req, res) => {
             });
         }
 
-        const { data: currentUserDetails, error: currentUserError } =
-            await getCurrentUserDetails(req);
+        const {
+            data: currentUserDetails,
+            error: currentUserError,
+        } = await getCurrentUserDetails(req);
 
         if (currentUserError) {
             return res
                 .status(currentUserError.status || 401)
-                .json({ error: currentUserError.message });
+                .json({
+                    error: currentUserError.message,
+                });
         }
 
-        const id_structure = currentUserDetails.id_structure;
+        const id_structure =
+            currentUserDetails.id_structure;
 
         const {
             id_debriefing,
@@ -484,11 +485,11 @@ const createActivity = async (req, res) => {
             id_param_name,
             rate_60minutes,
             id_status,
+            id_type_session = null,
 
             projects = [],
             contribs = [],
         } = req.body;
-
         if (!name) {
             return res.status(400).json({
                 error: "name is required",
@@ -507,6 +508,19 @@ const createActivity = async (req, res) => {
             });
         }
 
+        const parsedNumberSession =
+            Number(number_session);
+
+        if (
+            !Number.isInteger(parsedNumberSession) ||
+            parsedNumberSession <= 0
+        ) {
+            return res.status(400).json({
+                error:
+                    "number_session must be a positive integer",
+            });
+        }
+
         if (!Array.isArray(projects)) {
             return res.status(400).json({
                 error: "projects must be an array",
@@ -519,9 +533,13 @@ const createActivity = async (req, res) => {
             });
         }
 
-        if (contribs.length > 0 && !Array.isArray(rate_60minutes)) {
+        if (
+            contribs.length > 0 &&
+            !Array.isArray(rate_60minutes)
+        ) {
             return res.status(400).json({
-                error: "rate_60minutes must be an array when contribs are provided",
+                error:
+                    "rate_60minutes must be an array when contribs are provided",
             });
         }
 
@@ -530,52 +548,51 @@ const createActivity = async (req, res) => {
             rate_60minutes.length !== contribs.length
         ) {
             return res.status(400).json({
-                error: "rate_60minutes must have the same length as contribs",
+                error:
+                    "rate_60minutes must have the same length as contribs",
             });
         }
 
         const uniqueProjects = unique(projects);
         const uniqueContribs = unique(contribs);
 
-        if (uniqueContribs.length !== contribs.length) {
+        if (
+            uniqueContribs.length !==
+            contribs.length
+        ) {
             return res.status(400).json({
-                error: "contribs must not contain duplicates",
+                error:
+                    "contribs must not contain duplicates",
             });
         }
-
-        /*
-         * Vérification du programme.
-         */
-        const { data: programData, error: programError } =
-            await supabaseAdmin
-                .from("programs")
-                .select("*")
-                .eq("id", programId)
-                .eq("id_structure", id_structure)
-                .maybeSingle();
-
+        const {
+            data: programData,
+            error: programError,
+        } = await supabaseAdmin
+            .from("programs")
+            .select("*")
+            .eq("id", programId)
+            .eq("id_structure", id_structure)
+            .maybeSingle();
         if (programError) {
             return res.status(400).json({
                 error: programError.message,
             });
         }
-
         if (!programData) {
             return res.status(404).json({
                 error: "Program not found",
             });
         }
-
-        /*
-         * Vérification des projets.
-         */
         if (uniqueProjects.length > 0) {
-            const { data: validProjects, error: projectsError } =
-                await supabaseAdmin
-                    .from("projects")
-                    .select("id")
-                    .eq("id_structure", id_structure)
-                    .in("id", uniqueProjects);
+            const {
+                data: validProjects,
+                error: projectsError,
+            } = await supabaseAdmin
+                .from("projects")
+                .select("id")
+                .eq("id_structure", id_structure)
+                .in("id", uniqueProjects);
 
             if (projectsError) {
                 return res.status(400).json({
@@ -583,23 +600,25 @@ const createActivity = async (req, res) => {
                 });
             }
 
-            if ((validProjects ?? []).length !== uniqueProjects.length) {
+            if (
+                (validProjects ?? []).length !==
+                uniqueProjects.length
+            ) {
                 return res.status(400).json({
-                    error: "One or more projects are invalid for this structure",
+                    error:
+                        "One or more projects are invalid for this structure",
                 });
             }
         }
-
-        /*
-         * Vérification des intervenants.
-         */
         if (uniqueContribs.length > 0) {
-            const { data: validContribs, error: contribsError } =
-                await supabaseAdmin
-                    .from("contributors")
-                    .select("id")
-                    .eq("id_structure", id_structure)
-                    .in("id", uniqueContribs);
+            const {
+                data: validContribs,
+                error: contribsError,
+            } = await supabaseAdmin
+                .from("contributors")
+                .select("id")
+                .eq("id_structure", id_structure)
+                .in("id", uniqueContribs);
 
             if (contribsError) {
                 return res.status(400).json({
@@ -607,29 +626,39 @@ const createActivity = async (req, res) => {
                 });
             }
 
-            if ((validContribs ?? []).length !== uniqueContribs.length) {
+            if (
+                (validContribs ?? []).length !==
+                uniqueContribs.length
+            ) {
                 return res.status(400).json({
-                    error: "One or more contributors are invalid for this structure",
+                    error:
+                        "One or more contributors are invalid for this structure",
                 });
             }
         }
-
-        /*
-         * Création de l'activité.
-         */
         const activityPayload = {
-            id_debriefing: id_debriefing || null,
-            description: description || null,
-            duration_in_minutes: duration_in_minutes ?? null,
-            duration_realized: duration_realized ?? null,
-            incremental_session: incremental_session ?? null,
+            id_debriefing:
+                id_debriefing || null,
+
+            description:
+                description || null,
+
+            duration_in_minutes:
+                duration_in_minutes ?? null,
+
+            duration_realized:
+                duration_realized ?? null,
+
+            incremental_session:
+                incremental_session ?? null,
+
             is_finished: is_finished ?? false,
             is_note_needed: is_note_needed ?? false,
             is_planable: is_planable ?? false,
             is_priced: is_priced ?? false,
             is_sign_needed: is_sign_needed ?? false,
             name,
-            number_session: number_session ?? null,
+            number_session: parsedNumberSession,
             id_param_name,
             id_program: programId,
             rate_60minutes: null,
@@ -637,12 +666,14 @@ const createActivity = async (req, res) => {
             id_structure,
         };
 
-        const { data: activityData, error: activityError } =
-            await supabaseAdmin
-                .from("activities")
-                .insert(activityPayload)
-                .select("*")
-                .single();
+        const {
+            data: activityData,
+            error: activityError,
+        } = await supabaseAdmin
+            .from("activities")
+            .insert(activityPayload)
+            .select("*")
+            .single();
 
         if (activityError) {
             return res.status(400).json({
@@ -652,7 +683,8 @@ const createActivity = async (req, res) => {
 
         createdActivity = activityData;
 
-        const id_activity = createdActivity.id;
+        const id_activity =
+            createdActivity.id;
 
         let programActivity = null;
         let activityProjects = [];
@@ -660,37 +692,37 @@ const createActivity = async (req, res) => {
         let hourlyRates = [];
         let activityHourlyRates = [];
         let programProjectsAdded = [];
-
-        /*
-         * Relation programme -> activité.
-         */
-        const { data: programActivityData, error: programActivityError } =
-            await supabaseAdmin
-                .schema(RELATIONAL_SCHEMA)
-                .from("program_activities")
-                .insert({
-                    id_program: programId,
-                    id_activity,
-                })
-                .select("*")
-                .single();
+        let sessions = [];
+        let sessionUsers = [];
+        const { data: programActivityData, error: programActivityError } = await supabaseAdmin
+            .schema(RELATIONAL_SCHEMA)
+            .from("program_activities")
+            .insert({
+                id_program: programId,
+                id_activity,
+            })
+            .select("*")
+            .single();
 
         if (programActivityError) {
             throw programActivityError;
         }
 
-        programActivity = programActivityData;
-
-        /*
-         * Relations activité -> projets.
-         */
+        programActivity =
+            programActivityData;
         if (uniqueProjects.length > 0) {
-            const projectRows = uniqueProjects.map((id_project) => ({
-                id_activity,
-                id_project,
-            }));
+            const projectRows =
+                uniqueProjects.map(
+                    (id_project) => ({
+                        id_activity,
+                        id_project,
+                    })
+                );
 
-            const { data, error } = await supabaseAdmin
+            const {
+                data,
+                error,
+            } = await supabaseAdmin
                 .schema(RELATIONAL_SCHEMA)
                 .from("activity_projects")
                 .insert(projectRows)
@@ -700,19 +732,22 @@ const createActivity = async (req, res) => {
                 throw error;
             }
 
-            activityProjects = data ?? [];
+            activityProjects =
+                data ?? [];
         }
-
-        /*
-         * Relations activité -> intervenants.
-         */
         if (uniqueContribs.length > 0) {
-            const contribRows = uniqueContribs.map((id_contrib) => ({
-                id_activity,
-                id_contrib,
-            }));
+            const contribRows =
+                uniqueContribs.map(
+                    (id_contrib) => ({
+                        id_activity,
+                        id_contrib,
+                    })
+                );
 
-            const { data, error } = await supabaseAdmin
+            const {
+                data,
+                error,
+            } = await supabaseAdmin
                 .schema(RELATIONAL_SCHEMA)
                 .from("activity_contribs")
                 .insert(contribRows)
@@ -722,23 +757,27 @@ const createActivity = async (req, res) => {
                 throw error;
             }
 
-            activityContribs = data ?? [];
+            activityContribs =
+                data ?? [];
         }
-
-        /*
-         * Tarifs horaires.
-         */
         if (uniqueContribs.length > 0) {
-            const hourlyRateRows = uniqueContribs.map(
-                (id_contrib, index) => ({
-                    id_contrib,
-                    id_structure,
-                    rate_60minutes:
-                        Number(rate_60minutes[index]) || 0,
-                })
-            );
+            const hourlyRateRows =
+                uniqueContribs.map(
+                    (id_contrib, index) => ({
+                        id_contrib,
+                        id_structure,
 
-            const { data, error } = await supabaseAdmin
+                        rate_60minutes:
+                            Number(
+                                rate_60minutes[index]
+                            ) || 0,
+                    })
+                );
+
+            const {
+                data,
+                error,
+            } = await supabaseAdmin
                 .from("hourly_rates")
                 .insert(hourlyRateRows)
                 .select("*");
@@ -747,145 +786,302 @@ const createActivity = async (req, res) => {
                 throw error;
             }
 
-            hourlyRates = data ?? [];
+            hourlyRates =
+                data ?? [];
 
-            createdHourlyRateIds = hourlyRates.map(
-                (rate) => rate.id
-            );
+            createdHourlyRateIds =
+                hourlyRates.map(
+                    (rate) => rate.id
+                );
 
-            const activityHourlyRateRows = hourlyRates.map(
-                (hourlyRate) => ({
-                    id_activity,
-                    id_hourly_rate: hourlyRate.id,
-                })
-            );
+            const activityHourlyRateRows =
+                hourlyRates.map(
+                    (hourlyRate) => ({
+                        id_activity,
 
-            if (activityHourlyRateRows.length > 0) {
+                        id_hourly_rate:
+                            hourlyRate.id,
+                    })
+                );
+
+            if (
+                activityHourlyRateRows.length > 0
+            ) {
                 const {
                     data: relationData,
                     error: relationError,
                 } = await supabaseAdmin
                     .schema(RELATIONAL_SCHEMA)
-                    .from("activity_hourly_rates")
-                    .insert(activityHourlyRateRows)
+                    .from(
+                        "activity_hourly_rates"
+                    )
+                    .insert(
+                        activityHourlyRateRows
+                    )
                     .select("*");
 
                 if (relationError) {
                     throw relationError;
                 }
 
-                activityHourlyRates = relationData ?? [];
+                activityHourlyRates =
+                    relationData ?? [];
             }
         }
-
-        /*
-         * Ajout des projets au programme.
-         *
-         * On récupère les relations déjà présentes pour ce programme,
-         * puis on insère uniquement les projets manquants.
-         */
         if (uniqueProjects.length > 0) {
             const {
-                data: existingProgramProjectsData,
-                error: existingProgramProjectsError,
+                data:
+                existingProgramProjectsData,
+                error:
+                existingProgramProjectsError,
             } = await supabaseAdmin
                 .schema(RELATIONAL_SCHEMA)
                 .from("program_projects")
                 .select("id_project")
-                .eq("id_program", programId)
-                .in("id_project", uniqueProjects);
+                .eq(
+                    "id_program",
+                    programId
+                )
+                .in(
+                    "id_project",
+                    uniqueProjects
+                );
 
-            if (existingProgramProjectsError) {
+            if (
+                existingProgramProjectsError
+            ) {
                 throw existingProgramProjectsError;
             }
 
-            const existingProgramProjectIds = new Set(
-                (existingProgramProjectsData ?? []).map((link) =>
-                    String(link.id_project)
-                )
-            );
+            const existingProgramProjectIds =
+                new Set(
+                    (
+                        existingProgramProjectsData ??
+                        []
+                    ).map((link) =>
+                        String(
+                            link.id_project
+                        )
+                    )
+                );
 
-            const missingProgramProjectIds = uniqueProjects.filter(
-                (id_project) => {
-                    return !existingProgramProjectIds.has(
-                        String(id_project)
-                    );
-                }
-            );
+            const missingProgramProjectIds =
+                uniqueProjects.filter(
+                    (id_project) => {
+                        return !existingProgramProjectIds.has(
+                            String(id_project)
+                        );
+                    }
+                );
 
-            if (missingProgramProjectIds.length > 0) {
+            if (
+                missingProgramProjectIds.length >
+                0
+            ) {
                 const programProjectRows =
-                    missingProgramProjectIds.map((id_project) => ({
-                        id_program: programId,
-                        id_project,
-                    }));
+                    missingProgramProjectIds.map(
+                        (id_project) => ({
+                            id_program:
+                                programId,
 
-                const { data, error } = await supabaseAdmin
-                    .schema(RELATIONAL_SCHEMA)
-                    .from("program_projects")
-                    .insert(programProjectRows)
+                            id_project,
+                        })
+                    );
+
+                const {
+                    data,
+                    error,
+                } = await supabaseAdmin
+                    .schema(
+                        RELATIONAL_SCHEMA
+                    )
+                    .from(
+                        "program_projects"
+                    )
+                    .insert(
+                        programProjectRows
+                    )
                     .select("*");
 
                 if (error) {
                     throw error;
                 }
 
-                programProjectsAdded = data ?? [];
+                programProjectsAdded =
+                    data ?? [];
+
+                createdProgramProjectIds =
+                    programProjectsAdded.map(
+                        (link) => link.id
+                    );
             }
         }
+        const sessionsResult =
+            await createSessionsForActivity({
+                idActivity: id_activity,
+                idProgram: programId,
+                idStructure: id_structure,
+                numberSession: parsedNumberSession,
+                startIncrement: 1,
+            });
+
+        sessions = sessionsResult.sessions ?? [];
+        sessionUsers = sessionsResult.sessionUsers ?? [];
+        createdSessionIds = sessions.map(
+            (session) => session.id
+        );
 
         return res.status(201).json({
-            activity: createdActivity,
+            activity:
+                createdActivity,
+
             programActivity,
+
             activityProjects,
             activityContribs,
+
             hourlyRates,
             activityHourlyRates,
-            programProjectsAdded,
-        });
-    } catch (e) {
-        console.error(e);
 
+            programProjectsAdded,
+
+            sessions,
+            sessionUsers,
+        });
+    } catch (error) {
+        console.error(
+            "createActivity:",
+            error
+        );
+
+        /*
+         * Suppression des utilisateurs associés
+         * aux sessions créées.
+         */
+        if (
+            createdSessionIds.length > 0
+        ) {
+            await supabaseAdmin
+                .schema(RELATIONAL_SCHEMA)
+                .from("session_users")
+                .delete()
+                .in(
+                    "id_session",
+                    createdSessionIds
+                );
+
+            await supabaseAdmin
+                .from("sessions")
+                .delete()
+                .in(
+                    "id",
+                    createdSessionIds
+                );
+        }
+
+        /*
+         * Suppression des relations
+         * liées à l'activité.
+         */
         if (createdActivity?.id) {
             await supabaseAdmin
                 .schema(RELATIONAL_SCHEMA)
-                .from("activity_hourly_rates")
+                .from(
+                    "activity_hourly_rates"
+                )
                 .delete()
-                .eq("id_activity", createdActivity.id);
+                .eq(
+                    "id_activity",
+                    createdActivity.id
+                );
 
             await supabaseAdmin
                 .schema(RELATIONAL_SCHEMA)
-                .from("activity_contribs")
+                .from(
+                    "activity_contribs"
+                )
                 .delete()
-                .eq("id_activity", createdActivity.id);
+                .eq(
+                    "id_activity",
+                    createdActivity.id
+                );
 
             await supabaseAdmin
                 .schema(RELATIONAL_SCHEMA)
-                .from("activity_projects")
+                .from(
+                    "activity_projects"
+                )
                 .delete()
-                .eq("id_activity", createdActivity.id);
+                .eq(
+                    "id_activity",
+                    createdActivity.id
+                );
 
             await supabaseAdmin
                 .schema(RELATIONAL_SCHEMA)
-                .from("program_activities")
+                .from(
+                    "program_activities"
+                )
                 .delete()
-                .eq("id_activity", createdActivity.id);
+                .eq(
+                    "id_activity",
+                    createdActivity.id
+                );
+        }
 
+        /*
+         * Suppression uniquement des relations
+         * programme/projet créées pendant
+         * cette requête.
+         */
+        if (
+            createdProgramProjectIds.length >
+            0
+        ) {
+            await supabaseAdmin
+                .schema(RELATIONAL_SCHEMA)
+                .from("program_projects")
+                .delete()
+                .in(
+                    "id",
+                    createdProgramProjectIds
+                );
+        }
+
+        /*
+         * Suppression de l'activité.
+         */
+        if (createdActivity?.id) {
             await supabaseAdmin
                 .from("activities")
                 .delete()
-                .eq("id", createdActivity.id);
+                .eq(
+                    "id",
+                    createdActivity.id
+                );
         }
 
-        if (createdHourlyRateIds.length > 0) {
+        /*
+         * Suppression des tarifs horaires
+         * créés pendant cette requête.
+         */
+        if (
+            createdHourlyRateIds.length >
+            0
+        ) {
             await supabaseAdmin
                 .from("hourly_rates")
                 .delete()
-                .in("id", createdHourlyRateIds);
+                .in(
+                    "id",
+                    createdHourlyRateIds
+                );
         }
 
         return res.status(500).json({
-            error: e.message || "Server error",
+            error:
+                error.message ||
+                "Server error",
         });
     }
 };
@@ -929,6 +1125,16 @@ const updateActivity = async (req, res) => {
         if (!name || !id_param_name || !id_status) {
             return res.status(400).json({ error: "Missing required fields" });
         }
+        const parsedNumberSession = Number(number_session);
+
+        if (
+            !Number.isInteger(parsedNumberSession) ||
+            parsedNumberSession <= 0
+        ) {
+            return res.status(400).json({
+                error: "number_session must be a positive integer",
+            });
+        }
 
         const activityPayload = {
             id_debriefing: id_debriefing || null,
@@ -942,7 +1148,7 @@ const updateActivity = async (req, res) => {
             is_priced: is_priced ?? false,
             is_sign_needed: is_sign_needed ?? false,
             name,
-            number_session: number_session ?? null,
+            number_session: parsedNumberSession,
             id_param_name,
             id_status,
         };
