@@ -20,7 +20,13 @@ const getCurrentUserDetails = async (req) => {
 
     const { data, error } = await supabaseAdmin
         .from("user_details")
-        .select("id, id_structure")
+        .select(`
+            id,
+            id_auth_user,
+            id_structure,
+            id_contributor,
+            os_type_user
+        `)
         .eq("id_auth_user", currentAuthUserId)
         .maybeSingle();
 
@@ -130,6 +136,158 @@ const applyProgramFilters = (
     }
 
     return query;
+};
+
+const getProjectPrograms = async (req, res) => {
+    try {
+        const currentAuthUserId = req.user?.id;
+
+        if (!currentAuthUserId) {
+            return res.status(401).json({
+                error: "Unauthorized",
+            });
+        }
+
+        /*
+         * Un compte projet peut être rattaché à un ou
+         * plusieurs projets via relational.project_users.
+         */
+        const {
+            data: projectUserLinks,
+            error: projectUserLinksError,
+        } = await supabaseAdmin
+            .schema(RELATIONAL_SCHEMA)
+            .from("project_users")
+            .select("id_project")
+            .eq("id_user", currentAuthUserId);
+
+        if (projectUserLinksError) {
+            return res.status(400).json({
+                error: projectUserLinksError.message,
+            });
+        }
+
+        const projectIds = unique(
+            (projectUserLinks ?? []).map(
+                (link) => link.id_project
+            )
+        );
+
+        /*
+         * Aucun projet lié à cet utilisateur :
+         * getPrograms retournera une liste vide.
+         */
+        if (projectIds.length === 0) {
+            req.allowedProgramIds = [];
+
+            return getPrograms(req, res);
+        }
+
+        /*
+         * On récupère les programmes liés aux projets
+         * auxquels l'utilisateur participe.
+         */
+        const {
+            data: programProjectLinks,
+            error: programProjectLinksError,
+        } = await supabaseAdmin
+            .schema(RELATIONAL_SCHEMA)
+            .from("program_projects")
+            .select("id_program")
+            .in("id_project", projectIds);
+
+        if (programProjectLinksError) {
+            return res.status(400).json({
+                error: programProjectLinksError.message,
+            });
+        }
+
+        req.allowedProgramIds = unique(
+            (programProjectLinks ?? []).map(
+                (link) => link.id_program
+            )
+        );
+
+        return getPrograms(req, res);
+    } catch (error) {
+        console.error(error);
+
+        return res.status(500).json({
+            error:
+                error.message ||
+                "Server error",
+        });
+    }
+};
+
+const getContributorPrograms = async (
+    req,
+    res
+) => {
+    try {
+        const {
+            data: currentUserDetails,
+            error: currentUserError,
+        } = await getCurrentUserDetails(req);
+
+        if (currentUserError) {
+            return res
+                .status(
+                    currentUserError.status ||
+                    401
+                )
+                .json({
+                    error:
+                        currentUserError.message,
+                });
+        }
+
+        const contributorId =
+            currentUserDetails.id_contributor;
+
+        if (!contributorId) {
+            return res.status(400).json({
+                error:
+                    "Current user is not linked to a contributor",
+            });
+        }
+
+        const {
+            data: programContributorLinks,
+            error:
+            programContributorLinksError,
+        } = await supabaseAdmin
+            .schema(RELATIONAL_SCHEMA)
+            .from("program_contributors")
+            .select("id_program")
+            .eq(
+                "id_contributor",
+                contributorId
+            );
+
+        if (programContributorLinksError) {
+            return res.status(400).json({
+                error:
+                    programContributorLinksError.message,
+            });
+        }
+
+        req.allowedProgramIds = unique(
+            (programContributorLinks ?? []).map(
+                (link) => link.id_program
+            )
+        );
+
+        return getPrograms(req, res);
+    } catch (error) {
+        console.error(error);
+
+        return res.status(500).json({
+            error:
+                error.message ||
+                "Server error",
+        });
+    }
 };
 
 const getPrograms = async (req, res) => {
@@ -287,7 +445,10 @@ const getPrograms = async (req, res) => {
          * Chaque filtre retourne une liste d'IDs de programmes.
          * En cas de plusieurs filtres, on fait une intersection.
          */
-        let relationalProgramIds = null;
+        let relationalProgramIds =
+            Array.isArray(req.allowedProgramIds)
+                ? unique(req.allowedProgramIds)
+                : null;
 
         if (contributorId) {
             const {
@@ -1339,6 +1500,8 @@ const addProjectToProgram = async (req, res) => {
 
 module.exports = {
     getPrograms,
+    getProjectPrograms,
+    getContributorPrograms,
     getProgramsStatusCounts,
     getProgramProjects,
     addProjectToProgram,
